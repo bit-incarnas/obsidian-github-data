@@ -4,13 +4,15 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 
 **Principle:** vault data stays in the vault. This plugin pulls data *in* from GitHub; it does not push vault contents *out* except when an explicit user-invoked command (in a future phase) requests it.
 
-## Current state (scaffold + HTTP layer + settings tab)
+## Current state (scaffold + HTTP layer + settings tab + repo profile writer)
 
 | Outbound call | Destination | Trigger | Payload | Notes |
 | :------------ | :---------- | :------ | :------ | :---- |
-| `GET /user` | `api.github.com` | User clicks "Test connection" in Settings -> GitHub Data | `Authorization: Bearer <PAT>`, `User-Agent: obsidian-github-data` headers; no body; no vault content | User-initiated only. Never fires on plugin load or in the background. |
+| `GET /user` | `api.github.com` | User clicks "Test connection" in Settings -> GitHub Data | `Authorization: Bearer <PAT>`, `User-Agent: obsidian-github-data` headers; no body; no vault content | User-initiated. |
+| `GET /repos/{owner}/{repo}` | `api.github.com` | User runs `GitHub Data: Sync all repo profiles` command | Same auth + UA headers; path params only; no body; no vault content | User-initiated. One request per allowlisted repo. |
+| `GET /repos/{owner}/{repo}/readme` | `api.github.com` | Same command, same iteration | Same auth + UA headers; `Accept: application/vnd.github.raw` | User-initiated. 404 responses tolerated. |
 
-No background syncs, no scheduled polls, no auto-fetches. The test-connection button is the only outbound call invokable from the plugin UI at this version.
+All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
 
 The **HTTP layer** in `src/github/` is built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via `hook.wrap("request", ...)` wrapping Obsidian's `requestUrl`. It sets `Authorization: Bearer <PAT>` and `User-Agent: obsidian-github-data` on every call.
 

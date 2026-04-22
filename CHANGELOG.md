@@ -38,3 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `isRepoAllowlisted` for the codeblock processor + sync engine to enforce the allowlist at call time (Security Invariant H3).
 - Settings UI gained a "Repositories" section: text input + Add button with validation feedback, list of current entries with per-row Remove buttons, empty-state hint.
 - **19 new tests** in `src/settings/allowlist.test.ts`. Total: **121 tests across 6 suites**.
+
+### Added (repo profile writer — first real sync)
+- **`src/vault/writer.ts`** — `VaultWriter` interface + `ObsidianVaultWriter` (defensive folder creation with race handling; `writeFile` create-or-modify; `updateFrontmatter` routed through `app.fileManager.processFrontMatter`) + `InMemoryVaultWriter` for tests.
+- **`src/sync/repo-profile-writer.ts`** — `syncRepoProfile(owner, repo, options)` fetches repo metadata + optional README, composes a contained vault path, writes body with a stats table, and sets frontmatter atomically via `processFrontMatter`. Allowlist-enforced and malformed-name-rejected before any API call.
+- README content is **fenced as a code block** for v0.1 (Security Invariant L3) — full middle-ground body sanitizer arrives in a later slice.
+- New command `GitHub Data: Sync all repo profiles` iterates the allowlist, updates `settings.lastSyncedAt` per entry, and surfaces a final ok/failed count via Notice.
+- **8 new tests** in `src/sync/repo-profile-writer.test.ts`. Total: **129 tests across 7 suites**.
+
+### Data egress (updated)
+- Plugin runtime now has **three** possible outbound calls, all **user-initiated**: `GET /user` (Test connection), `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/readme` (Sync command, one iteration per allowlisted repo). No background polls, no scheduled syncs, no auto-fetches on startup. `docs/data-egress.md` updated.
