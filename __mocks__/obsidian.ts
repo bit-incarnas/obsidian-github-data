@@ -123,3 +123,24 @@ export class TFolder {
 	name = "";
 	children: unknown[] = [];
 }
+
+/**
+ * FileSystemAdapter mock -- real class exists only on desktop. Tests that
+ * need `adapter instanceof FileSystemAdapter` construct an instance here
+ * and monkey-patch `getBasePath`.
+ */
+export class FileSystemAdapter {
+	getBasePath(): string {
+		return "/";
+	}
+}
+
+/**
+ * Shape of the (undocumented) SecretStorage API. Tests that need it
+ * inject an instance onto `app.secretStorage`.
+ */
+export type SecretStorageApi = {
+	getSecret(key: string): string | null | Promise<string | null>;
+	setSecret(key: string, value: string): void | Promise<void>;
+	removeSecret?(key: string): void | Promise<void>;
+};
