@@ -6,6 +6,7 @@ import { GithubDataSettingTab } from "./settings/settings-tab";
 import { maybeShowDevVaultNotice } from "./settings/dev-vault-notice";
 import { resolveToken } from "./settings/secret-storage";
 import { DEFAULT_SETTINGS, mergeSettings, type GithubDataSettings } from "./settings/types";
+import { syncRepoDependabotAlerts } from "./sync/dependabot-writer";
 import { syncRepoIssues } from "./sync/issue-writer";
 import { syncRepoPullRequests } from "./sync/pr-writer";
 import { syncRepoReleases } from "./sync/release-writer";
@@ -61,9 +62,78 @@ export default class GithubDataPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "sync-dependabot",
+			name: "Sync all open Dependabot alerts",
+			callback: () => {
+				void this.syncAllDependabotAlerts();
+			},
+		});
+
 		this.app.workspace.onLayoutReady(() => {
 			void this.onAppReady();
 		});
+	}
+
+	async syncAllDependabotAlerts(): Promise<void> {
+		const token = this.getToken();
+		if (!token) {
+			new Notice(
+				"No GitHub token set. Add one in Settings -> GitHub Data.",
+			);
+			return;
+		}
+		const allowlist = this.settings.repoAllowlist;
+		if (allowlist.length === 0) {
+			new Notice(
+				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
+			);
+			return;
+		}
+
+		new Notice(
+			`GitHub Data: fetching Dependabot alerts for ${allowlist.length} repo(s)...`,
+		);
+
+		const client = createGithubClient({ token });
+		const writer = new ObsidianVaultWriter(this.app);
+
+		let synced = 0;
+		let failed = 0;
+		let skipped = 0;
+		for (const entry of allowlist) {
+			const parsed = parseRepoPath(entry);
+			if (!parsed.valid) {
+				console.warn("[github-data] skipping invalid entry", entry);
+				failed++;
+				continue;
+			}
+			const result = await syncRepoDependabotAlerts(
+				parsed.owner,
+				parsed.repo,
+				{ client, writer, allowlist },
+			);
+			if (result.ok) {
+				if (result.skipped === "alerts-disabled") {
+					skipped++;
+				} else {
+					synced += result.syncedCount ?? 0;
+					failed += result.failedCount ?? 0;
+				}
+			} else {
+				console.warn(
+					`[github-data] Dependabot sync failed for ${entry}:`,
+					result.reason,
+				);
+				failed++;
+			}
+		}
+
+		const skippedNote = skipped > 0 ? `, ${skipped} had alerts disabled` : "";
+		new Notice(
+			`GitHub Data: Dependabot sync complete. ${synced} synced, ${failed} failed${skippedNote}.`,
+			6000,
+		);
 	}
 
 	async syncAllReleases(): Promise<void> {
