@@ -31,3 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Defenses: NFKC normalization, ASCII whitelist (rejects Cyrillic/Greek homoglyphs), leading/trailing dot stripping, Windows reserved-name escaping (`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9` with optional extensions), length caps, fallback-on-empty, lowercase-by-default for case-insensitive FS safety.
 - `joinInsideRoot` performs normalization + containment check, rejecting `..`-based path escapes.
 - **61 new tests** in `src/paths/sanitize.test.ts`. Total: **102 tests across 5 suites**.
+
+### Added (repo allowlist)
+- **`src/settings/allowlist.ts`** — pure add/remove/dedup helpers. Entries canonicalized as lowercase `owner/repo` (GitHub is case-insensitive for owner/repo, so storing a canonical form prevents silent duplicates).
+- `addRepoToAllowlist` validates via `parseRepoPath`, dedups case-insensitively, returns a new array (immutable).
+- `isRepoAllowlisted` for the codeblock processor + sync engine to enforce the allowlist at call time (Security Invariant H3).
+- Settings UI gained a "Repositories" section: text input + Add button with validation feedback, list of current entries with per-row Remove buttons, empty-state hint.
+- **19 new tests** in `src/settings/allowlist.test.ts`. Total: **121 tests across 6 suites**.
