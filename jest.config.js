@@ -5,9 +5,15 @@ module.exports = {
 	moduleNameMapper: {
 		"^obsidian$": "<rootDir>/__mocks__/obsidian.ts",
 	},
-	testMatch: ["**/src/**/*.test.ts", "**/__tests__/**/*.test.ts"],
+	// Default run = unit tests only. Integration tests live under tests/integration/
+	// and run via `npm run test:integration` (requires GH_TEST_TOKEN).
+	testMatch: ["**/src/**/*.test.ts"],
+	testPathIgnorePatterns: [
+		"/node_modules/",
+		"/tests/integration/",
+	],
 	transform: {
-		"^.+\\.tsx?$": [
+		"^.+\\.(ts|tsx|js|mjs)$": [
 			"ts-jest",
 			{
 				tsconfig: {
@@ -18,6 +24,7 @@ module.exports = {
 					ignoreDeprecations: "6.0",
 					esModuleInterop: true,
 					isolatedModules: true,
+					allowJs: true,
 					strict: true,
 					skipLibCheck: true,
 					types: ["node", "jest"],
@@ -25,4 +32,10 @@ module.exports = {
 			},
 		],
 	},
+	// Octokit v7+ and its transitive deps ship as pure ESM. Jest defaults to
+	// ignoring node_modules for transform; explicitly include these so ts-jest
+	// converts them to CJS at test time.
+	transformIgnorePatterns: [
+		"node_modules/(?!(?:@octokit|universal-user-agent|before-after-hook|fast-content-type-parse)/)",
+	],
 };

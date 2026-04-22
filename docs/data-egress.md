@@ -4,11 +4,15 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 
 **Principle:** vault data stays in the vault. This plugin pulls data *in* from GitHub; it does not push vault contents *out* except when an explicit user-invoked command (in a future phase) requests it.
 
-## Scaffold (v0.0.1) -- current state
+## Current state (scaffold + HTTP layer)
 
 | Outbound call | Destination | Trigger | Payload | Notes |
 | :------------ | :---------- | :------ | :------ | :---- |
-| *(none)* | -- | -- | -- | The plugin has no HTTP layer yet. The only registered command is a console-only smoke test. |
+| *(none from plugin runtime)* | -- | -- | -- | `src/main.ts` only registers a console-only `ping` command. No network calls fire during normal plugin use. |
+
+The **HTTP layer exists** in `src/github/` -- built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via `hook.wrap("request", ...)` wrapping Obsidian's `requestUrl`. It sets `Authorization: Bearer <PAT>` and `User-Agent: obsidian-github-data` on every call.
+
+**Nothing in the plugin lifecycle invokes the HTTP layer yet.** It gets wired into the sync engine + settings tab in a later phase. Until then, the only way outbound calls can fire from this codebase is via the integration test suite (`npm run test:integration`), which requires an explicit `GH_TEST_TOKEN` env var and hits real GitHub to validate the bridge. That env var is never set in CI.
 
 Telemetry: **none**.
 Third-party error reporting: **none**.
