@@ -48,3 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Data egress (updated)
 - Plugin runtime now has **three** possible outbound calls, all **user-initiated**: `GET /user` (Test connection), `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/readme` (Sync command, one iteration per allowlisted repo). No background polls, no scheduled syncs, no auto-fetches on startup. `docs/data-egress.md` updated.
+
+### Added (middle-ground body sanitizer)
+- **`src/sanitize/body.ts`** — `sanitizeGithubMarkdown(input)` composable sanitizer for every GitHub-sourced markdown body written into the vault. Implements Security Invariant H1 (middle-ground).
+- Defenses: strips `<script>` / `<iframe>` / `<object>` / `<embed>` / `<link>` / `<style>` / `<meta>` / `<base>` tags; strips `on*` event-handler attributes; strips `javascript:` and `data:text/html` URL schemes; rewrites `<img>` to markdown image form; escapes Templater markers `<% ... %>` / `<%* ... %>`; escapes Dataview inline queries (`` `= `` and `` `$= ``); rewrites wikilinks containing `..`; escapes persist-block markers (`{% persist:* %}`).
+- Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
+- **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.

@@ -36,6 +36,7 @@ import {
 	sanitizePathSegment,
 	validateRepoName,
 } from "../paths/sanitize";
+import { sanitizeGithubMarkdown } from "../sanitize/body";
 import { isRepoAllowlisted } from "../settings/allowlist";
 import type { VaultWriter } from "../vault/writer";
 
@@ -207,18 +208,9 @@ function buildRepoProfileBody(
 	lines.push("");
 
 	if (readmeMarkdown && readmeMarkdown.length > 0) {
-		lines.push("## :: README (fenced)");
+		lines.push("## :: README");
 		lines.push("");
-		lines.push(
-			"> [!note] README content is fenced as a code block in v0.1. Full markdown sanitization arrives in a later slice.",
-		);
-		lines.push("");
-		// Fence using a delimiter that can't collide with markdown inside
-		// the README itself. Four backticks is adequate for READMEs that
-		// use triple-backtick code blocks.
-		lines.push("````markdown");
-		lines.push(readmeMarkdown);
-		lines.push("````");
+		lines.push(sanitizeGithubMarkdown(readmeMarkdown));
 		lines.push("");
 	}
 
