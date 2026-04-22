@@ -37,6 +37,11 @@ import {
 	validateRepoName,
 } from "../paths/sanitize";
 import { sanitizeGithubMarkdown } from "../sanitize/body";
+import {
+	extractPersistBlocks,
+	mergePersistBlocks,
+	userPersistBlock,
+} from "../sanitize/persist";
 import { isRepoAllowlisted } from "../settings/allowlist";
 import type { VaultWriter } from "../vault/writer";
 
@@ -135,13 +140,29 @@ export async function syncRepoProfile(
 	}
 
 	const syncedAt = now().toISOString();
-	const body = buildRepoProfileBody(repoData, readmeMarkdown);
+	const freshBody = buildRepoProfileBody(repoData, readmeMarkdown);
 
-	// Ensure the target folder exists, then create-or-overwrite the file,
-	// then set frontmatter atomically (avoids raw YAML string concat).
+	// Ensure the target folder exists before any read/write.
 	await writer.ensureFolder(vaultRoot);
 	await writer.ensureFolder(folderPath);
-	await writer.writeFile(filePath, body);
+
+	// Preserve user-authored persist blocks across re-sync. On first
+	// write there is no existing file, so nothing to preserve.
+	let bodyToWrite = freshBody;
+	if (await writer.pathExists(filePath)) {
+		try {
+			const existing = await writer.readFile(filePath);
+			const savedBlocks = extractPersistBlocks(existing);
+			if (savedBlocks.length > 0) {
+				bodyToWrite = mergePersistBlocks(freshBody, savedBlocks);
+			}
+		} catch {
+			// Read failed for some reason -- proceed with fresh body rather
+			// than blocking the sync. Orphan preservation is best-effort.
+		}
+	}
+
+	await writer.writeFile(filePath, bodyToWrite);
 	await writer.updateFrontmatter(filePath, (fm) => {
 		setRepoProfileFrontmatter(fm, repoData, syncedAt);
 	});
@@ -213,6 +234,14 @@ function buildRepoProfileBody(
 		lines.push(sanitizeGithubMarkdown(readmeMarkdown));
 		lines.push("");
 	}
+
+	// User-notes region preserved across re-sync. The content between
+	// the persist markers is whatever the user writes; template default
+	// is empty.
+	lines.push("## :: YOUR NOTES");
+	lines.push("");
+	lines.push(userPersistBlock("notes"));
+	lines.push("");
 
 	lines.push("---");
 	lines.push("## :: NAV");
