@@ -7,8 +7,9 @@
  * - Test-connection button (first real use of the HTTP bridge from
  *   plugin runtime; hits api.github.com to validate the PAT)
  * - Warning banner when the PAT is in plaintext
+ * - Repository allowlist editor
  *
- * Later phases: repo allowlist editor, sync cadence, log level, more.
+ * Later phases: sync cadence, log level, more.
  */
 
 import {
@@ -20,6 +21,10 @@ import {
 import { RequestError } from "@octokit/request-error";
 
 import { createGithubClient } from "../github/client";
+import {
+	addRepoToAllowlist,
+	removeRepoFromAllowlist,
+} from "./allowlist";
 import {
 	MIGRATION_ROTATE_WARNING,
 	clearSecret,
@@ -50,7 +55,76 @@ export class GithubDataSettingTab extends PluginSettingTab {
 		containerEl.createEl("h2", { text: "GitHub Data" });
 
 		await this.renderAuthSection(containerEl);
+		this.renderAllowlistSection(containerEl);
 		this.renderScopeHint(containerEl);
+	}
+
+	private renderAllowlistSection(parent: HTMLElement): void {
+		parent.createEl("h3", { text: "Repositories" });
+
+		const desc = parent.createDiv({ cls: "setting-item-description" });
+		desc.setText(
+			"Only repos in this allowlist will be synced or queryable via `github-*` codeblocks. Enter as `owner/repo` (case doesn't matter; entries are lowercased for comparison).",
+		);
+		desc.style.marginBottom = "0.75em";
+
+		// Add input
+		let pending = "";
+		new Setting(parent)
+			.setName("Add repository")
+			.setDesc(
+				"Paste or type a GitHub repo identifier. Validated against GitHub's naming rules before adding.",
+			)
+			.addText((text) => {
+				text.inputEl.autocomplete = "off";
+				text.setPlaceholder("bit-incarnas/eden");
+				text.onChange((value) => {
+					pending = value;
+				});
+			})
+			.addButton((btn) => {
+				btn.setButtonText("Add")
+					.setCta()
+					.onClick(async () => {
+						const result = addRepoToAllowlist(
+							this.plugin.settings.repoAllowlist,
+							pending,
+						);
+						if (!result.added) {
+							new Notice(result.reason ?? "Could not add.");
+							return;
+						}
+						this.plugin.settings.repoAllowlist = result.list;
+						await this.plugin.saveSettings();
+						pending = "";
+						await this.display();
+					});
+			});
+
+		// Current allowlist
+		const list = this.plugin.settings.repoAllowlist;
+		if (list.length === 0) {
+			const empty = parent.createDiv({ cls: "setting-item-description" });
+			empty.style.fontStyle = "italic";
+			empty.setText("No repositories allowlisted yet.");
+			return;
+		}
+
+		for (const entry of list) {
+			new Setting(parent).setName(entry).addButton((btn) => {
+				btn.setButtonText("Remove")
+					.setWarning()
+					.onClick(async () => {
+						this.plugin.settings.repoAllowlist =
+							removeRepoFromAllowlist(
+								this.plugin.settings.repoAllowlist,
+								entry,
+							);
+						await this.plugin.saveSettings();
+						await this.display();
+					});
+			});
+		}
 	}
 
 	private async renderAuthSection(parent: HTMLElement): Promise<void> {
