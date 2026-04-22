@@ -1,31 +1,40 @@
 /**
  * GitHub API client built on `@octokit/core` + REST endpoint methods + paginate.
  *
- * Integrates with Obsidian's network layer via `octokit.hook.wrap("request", ...)`
- * rather than a `request.fetch` swap. The hook operates above the fetch layer,
- * so we return Octokit's expected `{data, status, headers, url}` shape directly
- * -- no need to forge a `Response` object. This avoids the impedance gap that
- * breaks binary uploads and GraphQL responses with a naive `customFetch`.
+ * Integrates with Obsidian's network layer via Octokit's `request.fetch`
+ * override. Octokit's own `fetchWrapper` handles URL template expansion,
+ * query-string construction, body serialization, header defaults, auth
+ * injection (via the `@octokit/auth-token` plugin), and response parsing.
+ * Our custom fetch just needs to receive the fully-resolved request and
+ * return a Response-like object.
  *
- * Octokit v7 ships without a default auth plugin, so we set the `Authorization`
- * header directly inside the wrap. This keeps the dep footprint smaller and
- * makes the auth path fully explicit / auditable (matches the Security
- * Invariants requirement to disclose every outbound request header).
+ * Why not `hook.wrap("request", ...)` (the original approach)?
  *
- * Non-2xx responses are mapped to `@octokit/request-error#RequestError` so
- * Octokit consumers behave normally.
+ * `hook.wrap` receives options AFTER `endpoint.merge` but BEFORE
+ * `endpoint.parse`. Bypassing the default request (as `hook.wrap` permits)
+ * means URL template expansion never runs -- direct calls like
+ * `client.rest.repos.get({owner, repo})` would send the literal template
+ * `/repos/{owner}/{repo}` to the server and 404. Paginated calls happened
+ * to work because `paginateRest.iterator` explicitly calls
+ * `route.endpoint(parameters)` first, resolving the URL before the hook
+ * chain fires.
+ *
+ * `request.fetch` is the canonical integration point -- everything below
+ * the fetchWrapper boundary is the HTTP transport, which is exactly what
+ * we need to replace.
  *
  * Design invariants (from 01_DESIGN.md Security Invariants -- HTTP layer):
  * - `@octokit/core` + plugins, not the meta `octokit` package.
- * - `hook.wrap("request", ...)`, not `request.fetch` swap.
- * - `status === 0` maps to an explicit throw.
+ * - Auth via `auth: token` option, so `@octokit/auth-token` injects the
+ *   `Authorization` header through Octokit's standard flow.
+ * - `status === 0` (Capacitor / native-transport failure) maps to an
+ *   explicit throw so Octokit never sees a "0 OK".
  * - HTTP dependency is injectable (`HttpFn`) for integration testability.
  */
 
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
 import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
-import { RequestError } from "@octokit/request-error";
 
 import { defaultHttpFn, type HttpFn } from "./http";
 
@@ -43,26 +52,40 @@ export interface CreateGithubClientOptions {
 	httpFn?: HttpFn;
 }
 
-const DEFAULT_BASE_URL = "https://api.github.com";
-
 export function createGithubClient(
 	options: CreateGithubClientOptions,
 ): GithubClient {
 	const http: HttpFn = options.httpFn ?? defaultHttpFn;
-	const token = options.token;
 	const userAgent = options.userAgent ?? "obsidian-github-data";
 
-	const octokit = new GithubOctokit({ userAgent });
+	return new GithubOctokit({
+		auth: options.token,
+		userAgent,
+		request: {
+			fetch: createRequestUrlFetch(http),
+		},
+	});
+}
 
-	octokit.hook.wrap("request", async (_defaultRequest, requestOptions) => {
-		const url = resolveUrl(requestOptions);
-		const method = (requestOptions.method ?? "GET").toUpperCase();
-		const headers = normalizeHeaders(requestOptions.headers);
-		// Octokit v7 has no default auth plugin; set the header explicitly.
-		// GitHub accepts `Bearer <pat>` for fine-grained PATs; also works for
-		// classic PATs. The fine-grained path is what v0.1 documents.
-		headers.authorization = `Bearer ${token}`;
-		const body = serializeBody(requestOptions.body);
+/**
+ * Build a `fetch`-compatible function that routes every call through the
+ * provided `HttpFn`. Octokit's fetchWrapper calls this with a fully-
+ * resolved URL, fully-composed headers, and a serialized body.
+ */
+function createRequestUrlFetch(http: HttpFn): typeof fetch {
+	return (async (
+		input: RequestInfo | URL,
+		init?: RequestInit,
+	): Promise<Response> => {
+		const url =
+			typeof input === "string"
+				? input
+				: input instanceof URL
+					? input.toString()
+					: (input as Request).url;
+		const method = (init?.method ?? "GET").toUpperCase();
+		const headers = normalizeInitHeaders(init?.headers);
+		const body = normalizeBody(init?.body);
 
 		const response = await http({
 			url,
@@ -74,84 +97,36 @@ export function createGithubClient(
 
 		// Capacitor / native-transport failure -- never let Octokit see 0 OK.
 		if (response.status === 0) {
-			throw new RequestError(
-				"Network request failed (status 0)",
-				500,
-				{ request: requestOptions },
-			);
+			throw new TypeError(`Network request failed: ${method} ${url}`);
 		}
 
-		const responseHeaders = normalizeResponseHeaders(response.headers);
-		const data = extractData(response, responseHeaders);
-
-		if (response.status >= 400) {
-			throw new RequestError(
-				deriveErrorMessage(data, response.status),
-				response.status,
-				{
-					request: requestOptions,
-					response: {
-						data,
-						status: response.status,
-						headers: responseHeaders,
-						url,
-					},
-				},
-			);
-		}
-
-		return {
-			data,
-			status: response.status,
-			headers: responseHeaders,
-			url,
-		};
-	});
-
-	return octokit;
+		return toResponse(response, url);
+	}) as typeof fetch;
 }
 
-function resolveUrl(requestOptions: {
-	url: string;
-	baseUrl?: string;
-}): string {
-	const { url } = requestOptions;
-	if (url.startsWith("http://") || url.startsWith("https://")) {
-		return url;
-	}
-	const base = (requestOptions.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-	const path = url.startsWith("/") ? url : `/${url}`;
-	return `${base}${path}`;
-}
-
-function normalizeHeaders(
-	headers: Record<string, string | number | undefined> | undefined,
+function normalizeInitHeaders(
+	h: HeadersInit | undefined,
 ): Record<string, string> {
 	const out: Record<string, string> = {};
-	if (!headers) return out;
-	for (const [k, v] of Object.entries(headers)) {
-		if (v !== undefined && v !== null) {
-			out[k] = String(v);
+	if (!h) return out;
+	if (h instanceof Headers) {
+		h.forEach((v, k) => {
+			out[k] = v;
+		});
+	} else if (Array.isArray(h)) {
+		for (const [k, v] of h) out[k] = v;
+	} else {
+		for (const [k, v] of Object.entries(h as Record<string, string>)) {
+			if (v !== undefined && v !== null) out[k] = String(v);
 		}
 	}
 	return out;
 }
 
-function normalizeResponseHeaders(
-	headers: unknown,
-): Record<string, string> {
-	if (!headers || typeof headers !== "object") return {};
-	const out: Record<string, string> = {};
-	for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
-		if (v !== undefined && v !== null) {
-			out[k.toLowerCase()] = String(v);
-		}
-	}
-	return out;
-}
-
-function serializeBody(body: unknown): string | ArrayBuffer | undefined {
-	if (body === undefined || body === null) return undefined;
+function normalizeBody(
+	body: BodyInit | null | undefined,
+): string | ArrayBuffer | undefined {
+	if (body == null) return undefined;
 	if (typeof body === "string") return body;
 	if (body instanceof ArrayBuffer) return body;
 	if (body instanceof Uint8Array) {
@@ -160,37 +135,73 @@ function serializeBody(body: unknown): string | ArrayBuffer | undefined {
 			body.byteOffset + body.byteLength,
 		) as ArrayBuffer;
 	}
-	return JSON.stringify(body);
+	// FormData / Blob / ReadableStream: out of scope for this client.
+	return undefined;
 }
 
-function extractData(
+function toResponse(
 	response: {
 		status: number;
-		json?: unknown;
+		headers: unknown;
 		text?: string;
+		json?: unknown;
+		arrayBuffer?: ArrayBuffer;
 	},
-	headers: Record<string, string>,
-): unknown {
-	// 204 No Content / 205 Reset Content -- no body
-	if (response.status === 204 || response.status === 205) return undefined;
-
-	const contentType = headers["content-type"] ?? "";
-	if (contentType.includes("application/json")) {
-		return response.json ?? null;
+	url: string,
+): Response {
+	const headers = new Headers();
+	for (const [k, v] of Object.entries(
+		(response.headers ?? {}) as Record<string, unknown>,
+	)) {
+		if (v === undefined || v === null) continue;
+		headers.set(k, String(v));
 	}
-	return response.text ?? response.json ?? null;
+
+	// Prefer arrayBuffer (preserves binary); fall back to text -> encode.
+	let body: BodyInit | null;
+	if (response.arrayBuffer && response.arrayBuffer.byteLength > 0) {
+		body = response.arrayBuffer;
+	} else if (typeof response.text === "string" && response.text.length > 0) {
+		body = response.text;
+	} else if (response.status === 204 || response.status === 205) {
+		body = null;
+	} else {
+		body = "";
+	}
+
+	// `new Response` is standard in Electron renderer + modern Node.
+	const resp = new Response(body as BodyInit | null, {
+		status: response.status,
+		statusText: statusTextFor(response.status),
+		headers,
+	});
+	// Response.url is read-only; Octokit reads it for paginate link parsing.
+	Object.defineProperty(resp, "url", { value: url, writable: false });
+	return resp;
 }
 
-function deriveErrorMessage(data: unknown, status: number): string {
-	if (typeof data === "string" && data.length > 0) return data;
-	if (data && typeof data === "object") {
-		const msg = (data as { message?: unknown }).message;
-		if (typeof msg === "string" && msg.length > 0) return msg;
-		try {
-			return JSON.stringify(data);
-		} catch {
-			// fall through
-		}
-	}
-	return `HTTP ${status}`;
+function statusTextFor(status: number): string {
+	const map: Record<number, string> = {
+		200: "OK",
+		201: "Created",
+		202: "Accepted",
+		204: "No Content",
+		205: "Reset Content",
+		301: "Moved Permanently",
+		302: "Found",
+		304: "Not Modified",
+		400: "Bad Request",
+		401: "Unauthorized",
+		403: "Forbidden",
+		404: "Not Found",
+		409: "Conflict",
+		410: "Gone",
+		422: "Unprocessable Entity",
+		429: "Too Many Requests",
+		500: "Internal Server Error",
+		502: "Bad Gateway",
+		503: "Service Unavailable",
+		504: "Gateway Timeout",
+	};
+	return map[status] ?? "";
 }
