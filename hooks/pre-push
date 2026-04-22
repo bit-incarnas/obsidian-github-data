@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# Block direct pushes to protected branches.
+#
+# The remote ruleset already rejects these; this hook fails fast with
+# a friendlier message + next-step hint so you catch the mistake before
+# the push round-trips to GitHub.
+#
+# Emergency bypass (server will still reject, so this only saves a
+# network round-trip):  git push --no-verify
+#
+
+set -e
+
+protected_branches='main'
+
+# git push feeds "<local_ref> <local_oid> <remote_ref> <remote_oid>" lines on stdin
+while read -r local_ref local_oid remote_ref remote_oid; do
+	branch=$(echo "$remote_ref" | sed 's,^refs/heads/,,')
+
+	for protected in $protected_branches; do
+		if [ "$branch" = "$protected" ]; then
+			cat >&2 <<-EOF
+
+				================================================================
+				  Direct push to '$protected' is blocked by local hook.
+				  The remote ruleset requires all changes via pull request.
+				================================================================
+
+				  To land your changes:
+				    git switch -c feature/<short-name>
+				    git push -u origin HEAD
+				    gh pr create --fill
+
+				  Emergency bypass (server still rejects):
+				    git push --no-verify
+			EOF
+			exit 1
+		fi
+	done
+done
+
+exit 0

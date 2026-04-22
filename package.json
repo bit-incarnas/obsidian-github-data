@@ -4,6 +4,7 @@
   "description": "Mirror GitHub state (repos, issues, PRs, releases, Dependabot, Actions, contribution activity) into vault-native markdown. Pull-in only; vault data stays in the vault.",
   "main": "main.js",
   "scripts": {
+    "prepare": "git config core.hooksPath hooks 2>/dev/null || true",
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "typecheck": "tsc --noEmit --skipLibCheck",
