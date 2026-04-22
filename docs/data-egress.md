@@ -13,6 +13,7 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 | `GET /repos/{owner}/{repo}/readme` | `api.github.com` | Same command, same iteration | Same auth + UA; `Accept: application/vnd.github.raw` | User-initiated. 404 tolerated. |
 | `GET /repos/{owner}/{repo}/issues` | `api.github.com` | User runs `GitHub Data: Sync all open issues` | Same auth + UA; `state=open&per_page=100` query; multi-page via `Link` header | User-initiated. Paginated. |
 | `GET /repos/{owner}/{repo}/pulls` | `api.github.com` | User runs `GitHub Data: Sync all open pull requests` | Same auth + UA; `state=open&per_page=100`; multi-page | User-initiated. Paginated. |
+| `GET /repos/{owner}/{repo}/releases` | `api.github.com` | User runs `GitHub Data: Sync all releases` | Same auth + UA; `per_page=100`; multi-page | User-initiated. Paginated. |
 
 All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
 

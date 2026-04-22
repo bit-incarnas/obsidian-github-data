@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
 - **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.
 
+### Added (release writer)
+- **`src/sync/release-writer.ts`** — `syncRepoReleases(owner, repo, options)` fetches all releases via `paginate` (listReleases endpoint), writes one file per release at `02_AREAS/GitHub/Repos/{owner}__{repo}/Releases/{sanitized-tag}.md`.
+- Tag names are run through `sanitizePathSegment` (tags can contain arbitrary characters, including `/`).
+- Per-release frontmatter: `type`, `repo`, `tag`, `name`, `is_draft`, `is_prerelease`, `author`, `assets_count`, `created`, `published`, `html_url`, `last_synced`, `schema_version`, `tags` (with `draft` / `prerelease` markers added dynamically).
+- Body: `# {tag} -- {name}`, state bits (draft / prerelease / author), published/created date, asset list with sizes formatted human-readably, GitHub link, sanitized release notes, persist-block user notes, NAV footer.
+- Same defense layering as other writers: allowlist, path containment, body sanitizer, persist-block preservation.
+- Empty-tag releases skipped (extremely rare but possible).
+- New command: `GitHub Data: Sync all releases`. Total commands: 5.
+- **10 new tests** in `src/sync/release-writer.test.ts`. Total: **224 tests across 12 suites**.
+
 ### Added (pull request writer)
 - **`src/sync/pr-writer.ts`** — `syncRepoPullRequests(owner, repo, options)` fetches all open PRs via `paginate` (clean `pulls.list` shape, no `issues.listForRepo` + filter), writes one file per PR at `02_AREAS/GitHub/Repos/{owner}__{repo}/Pull_Requests/{number}-{slug}.md`.
 - PR-specific frontmatter: `is_draft`, `base_branch`, `head_branch`, `requested_reviewers`, `merged_at`. Rest mirrors issue writer.
