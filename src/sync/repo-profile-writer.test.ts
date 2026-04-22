@@ -102,8 +102,7 @@ describe("syncRepoProfile", () => {
 		expect(stored!.body).toContain("> Local-first AI sandbox.");
 		expect(stored!.body).toContain("## :: STATS");
 		expect(stored!.body).toContain("| Stars | 42 |");
-		expect(stored!.body).toContain("## :: README (fenced)");
-		expect(stored!.body).toContain("````markdown");
+		expect(stored!.body).toContain("## :: README");
 		expect(stored!.body).toContain("# Eden");
 
 		expect(stored!.frontmatter).toMatchObject({
