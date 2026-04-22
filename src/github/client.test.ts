@@ -1,3 +1,6 @@
+/**
+ * @jest-environment node
+ */
 import { RequestError } from "@octokit/request-error";
 import { createGithubClient } from "./client";
 import type { HttpFn } from "./http";
@@ -46,7 +49,9 @@ describe("createGithubClient -- hook.wrap bridge", () => {
 			(k) => k.toLowerCase() === "authorization",
 		);
 		expect(authKey).toBeDefined();
-		expect(String(headers[authKey!])).toBe("Bearer mytoken");
+		// @octokit/auth-token uses `token <pat>` by default; accepts `Bearer` too.
+		// GitHub accepts both; we don't pin the format.
+		expect(String(headers[authKey!])).toMatch(/^(token|Bearer) mytoken$/);
 	});
 
 	test("resolves relative URLs against api.github.com", async () => {
