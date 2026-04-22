@@ -55,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
 - **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.
 
+### Added (Dependabot alerts writer)
+- **`src/sync/dependabot-writer.ts`** — `syncRepoDependabotAlerts(owner, repo, options)` fetches open Dependabot alerts via `paginate` (`listAlertsForRepo`), writes one file per alert at `02_AREAS/GitHub/Repos/{owner}__{repo}/Dependabot/{number}-{package}-{severity}.md`.
+- Open alerts only in v0.1 (dismissed/fixed archival deferred).
+- Per-alert frontmatter: `type`, `repo`, `number`, `state`, `package`, `ecosystem`, `severity`, `ghsa`, `cve` (from direct field or `identifiers` array), `summary`, `vulnerable_range`, `fixed_in`, `manifest_path`, `created`, `updated`, `dismissed_at`, `fixed_at`, `html_url`, `last_synced`, `schema_version`, `tags` (with `severity/{level}` for Dataview bucketing).
+- Body: summary blockquote, DETAILS table (package/ecosystem/severity/state/GHSA/CVE/vulnerable range/fixed version/manifest), GitHub link, sanitized advisory description, references list, persist-block user notes, NAV.
+- 404 (alerts disabled on the repo) tolerated as `skipped: "alerts-disabled"` so the command doesn't fail across mixed allowlists. 403 gets a scope-hint message.
+- Empty-alert-list path skips folder creation to keep the tree clean.
+- New command: `GitHub Data: Sync all open Dependabot alerts`. Total commands: 6.
+- **11 new tests** in `src/sync/dependabot-writer.test.ts`. Total: **235 tests across 13 suites**.
+
+### Docs
+- **README rewritten**: exhaustive data-egress table, setup walkthrough (install via BRAT, PAT creation + SecretStorage migration with rotate warning, allowlist, test connection, run sync commands), expanded safety-posture section, development section covering integration-test invocation and pre-push hook / PR workflow.
+
 ### Added (release writer)
 - **`src/sync/release-writer.ts`** — `syncRepoReleases(owner, repo, options)` fetches all releases via `paginate` (listReleases endpoint), writes one file per release at `02_AREAS/GitHub/Repos/{owner}__{repo}/Releases/{sanitized-tag}.md`.
 - Tag names are run through `sanitizePathSegment` (tags can contain arbitrary characters, including `/`).
