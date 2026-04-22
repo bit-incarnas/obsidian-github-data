@@ -54,3 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Defenses: strips `<script>` / `<iframe>` / `<object>` / `<embed>` / `<link>` / `<style>` / `<meta>` / `<base>` tags; strips `on*` event-handler attributes; strips `javascript:` and `data:text/html` URL schemes; rewrites `<img>` to markdown image form; escapes Templater markers `<% ... %>` / `<%* ... %>`; escapes Dataview inline queries (`` `= `` and `` `$= ``); rewrites wikilinks containing `..`; escapes persist-block markers (`{% persist:* %}`).
 - Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
 - **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.
+
+### Added (persist-block utilities)
+- **`src/sanitize/persist.ts`** — `extractPersistBlocks(text)`, `mergePersistBlocks(newText, saved)`, `looksGithubSourced(content)`, `userPersistBlock(name, initial?)`. Implements Security Invariant H2 defensively.
+- Namespaced markers: `{% persist:user "name" %}...{% endpersist %}` survive re-sync; `{% persist:template "name" %}...{% endpersist %}` are transient and always replaced by the writer.
+- Orphaned user blocks (saved name no longer in template) are preserved in a clearly-marked orphan section inserted before the `## :: NAV` footer rather than silently lost.
+- Repo profile writer now includes a `## :: YOUR NOTES` section with a `persist:user "notes"` block by default, and preserves the user's content across re-syncs via `extractPersistBlocks` + `mergePersistBlocks`.
+- NOTICES updated with pattern-level acknowledgement of `obsidian-zotero-integration` (original pattern) and `LonoxX/obsidian-github-issues` (refinement). No code copied -- logic re-derived with project-specific namespacing.
+- **23 new tests** in `src/sanitize/persist.test.ts` + **2 new integration tests** in `repo-profile-writer.test.ts`. Total: **195 tests across 9 suites**.

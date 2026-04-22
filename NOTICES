@@ -12,18 +12,34 @@ plugin's MIT license before the lift is merged.
 
 ## Current entries
 
-*(none yet -- first code lifts arrive with v0.1 persist-block port)*
+*(no code-level lifts so far -- everything re-derived from scratch.)*
 
 ---
 
-## Planned entries (pending license verification)
+## Pattern-level acknowledgements (concept only, not code)
 
-- **Persist-block utilities** (`src/util/persist.ts`, to be added)
-  - Upstream: `LonoxX/obsidian-github-issues` (MIT)
-  - Upstream-upstream: `mgmeyers/obsidian-zotero-integration` (license to verify before lift)
-  - Status: BLOCKED -- awaiting Zotero-Integration license confirmation.
+These inspirations are noted for completeness. No code was copied from
+these sources; the logic below was re-derived with project-specific
+changes.
+
+- **Persist-block concept** (`src/sanitize/persist.ts`)
+  - Pattern originally from `mgmeyers/obsidian-zotero-integration`
+    (MIT) and further refined by `LonoxX/obsidian-github-issues` (MIT).
+  - Our implementation differs: persist blocks are *namespaced*
+    (`persist:user` vs `persist:template`) per this plugin's Security
+    Invariant H2 -- hostile GitHub content cannot inject a
+    survive-across-sync block. The extraction regex and merge logic
+    are original.
 
 - **Jest obsidian mock shim** (`__mocks__/obsidian.ts`)
   - Written from scratch for this repo. No upstream.
+
+- **Octokit `customFetch` pattern**
+  - The idea of routing `request.fetch` through Obsidian's
+    `requestUrl` originated in `Epistemic-Technology/obsidian-github-tasks`
+    (MIT) and `nathonius/obsidian-github-link`. We chose the superior
+    `hook.wrap("request", ...)` approach instead, which operates above
+    the fetch layer and avoids the `Response`-shape impedance gap.
+    No code was copied.
 
 See `docs/data-egress.md` and `docs/data-schema.md` for further disclosures.

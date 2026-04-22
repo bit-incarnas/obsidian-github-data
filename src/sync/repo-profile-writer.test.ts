@@ -238,6 +238,63 @@ describe("syncRepoProfile", () => {
 		expect(newBody).toContain("| Stars | 1000 |");
 	});
 
+	test("includes an empty YOUR NOTES persist block on first sync", async () => {
+		const writer = new InMemoryVaultWriter();
+		const { client } = makeClient({
+			getResponse: () => okResponse(sampleRepoData()),
+		});
+
+		const result = await syncRepoProfile("bit-incarnas", "eden", {
+			client,
+			writer,
+			allowlist: ["bit-incarnas/eden"],
+			now,
+		});
+
+		const body = writer.files.get(result.path!)!.body;
+		expect(body).toContain("## :: YOUR NOTES");
+		expect(body).toContain('{% persist:user "notes" %}');
+		expect(body).toContain("{% endpersist %}");
+	});
+
+	test("preserves user edits in persist:user blocks across re-sync", async () => {
+		const writer = new InMemoryVaultWriter();
+		const first = makeClient({
+			getResponse: () => okResponse(sampleRepoData()),
+		});
+		const result1 = await syncRepoProfile("bit-incarnas", "eden", {
+			client: first.client,
+			writer,
+			allowlist: ["bit-incarnas/eden"],
+			now,
+		});
+		expect(result1.ok).toBe(true);
+
+		// Simulate the user editing the persist block directly.
+		const file = writer.files.get(result1.path!)!;
+		file.body = file.body.replace(
+			/\{% persist:user "notes" %\}\n\n\{% endpersist %\}/,
+			'{% persist:user "notes" %}\nMy own notes about this repo.\n{% endpersist %}',
+		);
+
+		// Re-sync with updated metadata.
+		const second = makeClient({
+			getResponse: () =>
+				okResponse({ ...sampleRepoData(), stargazers_count: 100 }),
+		});
+		const result2 = await syncRepoProfile("bit-incarnas", "eden", {
+			client: second.client,
+			writer,
+			allowlist: ["bit-incarnas/eden"],
+			now,
+		});
+		expect(result2.ok).toBe(true);
+
+		const newBody = writer.files.get(result2.path!)!.body;
+		expect(newBody).toContain("My own notes about this repo.");
+		expect(newBody).toContain("| Stars | 100 |"); // upstream update applied
+	});
+
 	test("allowlist check is case-insensitive", async () => {
 		const writer = new InMemoryVaultWriter();
 		const { client } = makeClient({
