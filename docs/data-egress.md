@@ -4,15 +4,17 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 
 **Principle:** vault data stays in the vault. This plugin pulls data *in* from GitHub; it does not push vault contents *out* except when an explicit user-invoked command (in a future phase) requests it.
 
-## Current state (scaffold + HTTP layer)
+## Current state (scaffold + HTTP layer + settings tab)
 
 | Outbound call | Destination | Trigger | Payload | Notes |
 | :------------ | :---------- | :------ | :------ | :---- |
-| *(none from plugin runtime)* | -- | -- | -- | `src/main.ts` only registers a console-only `ping` command. No network calls fire during normal plugin use. |
+| `GET /user` | `api.github.com` | User clicks "Test connection" in Settings -> GitHub Data | `Authorization: Bearer <PAT>`, `User-Agent: obsidian-github-data` headers; no body; no vault content | User-initiated only. Never fires on plugin load or in the background. |
 
-The **HTTP layer exists** in `src/github/` -- built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via `hook.wrap("request", ...)` wrapping Obsidian's `requestUrl`. It sets `Authorization: Bearer <PAT>` and `User-Agent: obsidian-github-data` on every call.
+No background syncs, no scheduled polls, no auto-fetches. The test-connection button is the only outbound call invokable from the plugin UI at this version.
 
-**Nothing in the plugin lifecycle invokes the HTTP layer yet.** It gets wired into the sync engine + settings tab in a later phase. Until then, the only way outbound calls can fire from this codebase is via the integration test suite (`npm run test:integration`), which requires an explicit `GH_TEST_TOKEN` env var and hits real GitHub to validate the bridge. That env var is never set in CI.
+The **HTTP layer** in `src/github/` is built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via `hook.wrap("request", ...)` wrapping Obsidian's `requestUrl`. It sets `Authorization: Bearer <PAT>` and `User-Agent: obsidian-github-data` on every call.
+
+The integration test suite (`npm run test:integration`) can also fire outbound calls when run manually with an explicit `GH_TEST_TOKEN` env var. That env var is never set in CI.
 
 Telemetry: **none**.
 Third-party error reporting: **none**.
