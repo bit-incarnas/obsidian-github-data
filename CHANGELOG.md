@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
 - **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.
 
+### Added (pull request writer)
+- **`src/sync/pr-writer.ts`** — `syncRepoPullRequests(owner, repo, options)` fetches all open PRs via `paginate` (clean `pulls.list` shape, no `issues.listForRepo` + filter), writes one file per PR at `02_AREAS/GitHub/Repos/{owner}__{repo}/Pull_Requests/{number}-{slug}.md`.
+- PR-specific frontmatter: `is_draft`, `base_branch`, `head_branch`, `requested_reviewers`, `merged_at`. Rest mirrors issue writer.
+- Body includes branch indicator (`head -> base`), state + draft marker, labels / assignees / reviewers / milestone, GitHub link, sanitized description, persist-block user notes, NAV footer.
+- Same defense layering as issue writer: allowlist + name validation + path containment + body sanitizer + persist-block preservation.
+- New command: `GitHub Data: Sync all open pull requests`. Total commands: 4 (ping, sync profiles, sync issues, sync PRs).
+- **9 new tests** in `src/sync/pr-writer.test.ts`. Total: **214 tests across 11 suites**.
+- Deferred to future enrichment: `mergeable_state`, `review_decision` (GraphQL-only), review comments, CodeRabbit first-class treatment.
+
 ### Added (issue writer)
 - **`src/sync/issue-writer.ts`** — `syncRepoIssues(owner, repo, options)` fetches all open issues via `paginate`, filters PRs out of the issues feed, writes one file per issue at `02_AREAS/GitHub/Repos/{owner}__{repo}/Issues/{number}-{slug}.md`.
 - Per-issue frontmatter: `type`, `repo`, `number`, `state`, `title`, `labels`, `assignees`, `milestone`, `author`, `comments_count`, `created`, `updated`, `closed`, `html_url`, `last_synced`, `schema_version`, `tags`.

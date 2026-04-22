@@ -52,16 +52,17 @@ describe("GithubDataPlugin", () => {
 		expect(plugin.addSettingTab).toHaveBeenCalledTimes(1);
 	});
 
-	test("registers ping + both sync commands", async () => {
+	test("registers ping + all three sync commands", async () => {
 		const plugin = new GithubDataPlugin(app, manifest);
 		await plugin.onload();
-		expect(plugin.addCommand).toHaveBeenCalledTimes(3);
+		expect(plugin.addCommand).toHaveBeenCalledTimes(4);
 		const ids = (plugin.addCommand as jest.Mock).mock.calls.map(
 			(c) => c[0].id,
 		);
 		expect(ids).toContain("ping");
 		expect(ids).toContain("sync-repo-profiles");
 		expect(ids).toContain("sync-open-issues");
+		expect(ids).toContain("sync-open-prs");
 	});
 
 	test("getToken returns empty string when no token stored", async () => {
