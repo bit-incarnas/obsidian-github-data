@@ -21,10 +21,22 @@ Full disclosure: [`docs/data-egress.md`](docs/data-egress.md) + [`docs/data-sche
 Requires Node 22+ and npm 10+.
 
 ```bash
-npm install
+npm install       # also wires up the pre-push hook (see below)
 npm run dev       # esbuild watch -> main.js
 npm test          # jest
 npm run build     # typecheck + production build
+```
+
+`npm install` runs a `prepare` script that sets `core.hooksPath` to `hooks/`, wiring up the `pre-push` hook that blocks direct pushes to `main`. The remote ruleset rejects such pushes anyway; the local hook just fails faster with a friendly reminder. Bypass with `git push --no-verify` (server still rejects).
+
+Workflow:
+
+```bash
+git switch -c feature/<short-name>
+# ...work...
+git push -u origin HEAD
+gh pr create --fill
+# CI runs; merge when green
 ```
 
 To install locally against a dev vault:
