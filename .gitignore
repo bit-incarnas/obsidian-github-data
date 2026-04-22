@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output (the committed version is produced by CI on tag)
+main.js
+main.js.map
+
+# Obsidian plugin runtime state -- NEVER commit (may contain PAT)
+data.json
+data.json.backup
+cache.db
+errors.log
+migration-errors.log
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+
+# Jest
+coverage/

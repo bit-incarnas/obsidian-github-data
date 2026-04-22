@@ -1,0 +1,48 @@
+{
+  "name": "obsidian-github-data",
+  "version": "0.0.1",
+  "description": "Mirror GitHub state (repos, issues, PRs, releases, Dependabot, Actions, contribution activity) into vault-native markdown. Pull-in only; vault data stays in the vault.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "github"
+  ],
+  "author": "bit-incarnas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bit-incarnas/obsidian-github-data.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bit-incarnas/obsidian-github-data/issues"
+  },
+  "homepage": "https://github.com/bit-incarnas/obsidian-github-data#readme",
+  "dependencies": {
+    "@octokit/auth-oauth-device": "8.0.3",
+    "@octokit/core": "7.0.6",
+    "@octokit/plugin-paginate-rest": "14.0.0",
+    "@octokit/plugin-rest-endpoint-methods": "17.0.0",
+    "@octokit/request": "10.0.8",
+    "date-fns": "4.1.0"
+  },
+  "devDependencies": {
+    "@types/jest": "30.0.0",
+    "@types/node": "25.6.0",
+    "builtin-modules": "5.1.0",
+    "esbuild": "0.28.0",
+    "jest": "30.3.0",
+    "jest-environment-jsdom": "30.3.0",
+    "obsidian": "1.12.3",
+    "ts-jest": "29.4.9",
+    "tslib": "2.8.1",
+    "typescript": "6.0.3"
+  }
+}

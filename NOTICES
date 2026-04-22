@@ -1,0 +1,29 @@
+# NOTICES
+
+This file lists third-party code fragments that have been adapted or ported
+into this plugin, along with their original licenses. Patterns alone (ideas,
+architecture) are not listed; only code-level lifts or direct ports.
+
+Per the plugin program's code-lift provenance policy, every entry here must
+cite the upstream source and confirm its license is compatible with this
+plugin's MIT license before the lift is merged.
+
+---
+
+## Current entries
+
+*(none yet -- first code lifts arrive with v0.1 persist-block port)*
+
+---
+
+## Planned entries (pending license verification)
+
+- **Persist-block utilities** (`src/util/persist.ts`, to be added)
+  - Upstream: `LonoxX/obsidian-github-issues` (MIT)
+  - Upstream-upstream: `mgmeyers/obsidian-zotero-integration` (license to verify before lift)
+  - Status: BLOCKED -- awaiting Zotero-Integration license confirmation.
+
+- **Jest obsidian mock shim** (`__mocks__/obsidian.ts`)
+  - Written from scratch for this repo. No upstream.
+
+See `docs/data-egress.md` and `docs/data-schema.md` for further disclosures.

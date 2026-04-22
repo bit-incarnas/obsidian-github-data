@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build + Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (ci, no scripts without lockfile)
+        run: npm ci
+
+      - name: Audit dependencies (fail on high or critical)
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          # Uses gitleaks' default config which ships with GitHub token patterns
+          # covering ghp_, gho_, ghr_, ghu_, ghs_, and GitHub App JWTs.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  data-egress-audit:
+    name: Data-egress audit (docs diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Grep source for network calls
+        run: |
+          set -e
+          # Collect every network-adjacent API reference in source
+          found=$(grep -rEn 'requestUrl|fetch\(|XMLHttpRequest|new WebSocket|EventSource|sendBeacon' src/ || true)
+          if [ -z "$found" ]; then
+            echo "No network calls in src/. docs/data-egress.md should reflect that."
+          else
+            echo "Network call sites detected:"
+            echo "$found"
+            echo "Ensure each site is disclosed in docs/data-egress.md."
+          fi
+
+      - name: Ensure data-egress doc exists
+        run: test -f docs/data-egress.md

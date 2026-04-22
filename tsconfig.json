@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"rootDir": ".",
+		"module": "ESNext",
+		"target": "ES2020",
+		"moduleResolution": "bundler",
+		"ignoreDeprecations": "6.0",
+		"allowJs": true,
+		"isolatedModules": true,
+		"importHelpers": true,
+		"esModuleInterop": true,
+		"strict": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		"inlineSourceMap": true,
+		"inlineSources": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"lib": ["DOM", "ES2020"],
+		"types": ["node", "jest"]
+	},
+	"include": ["src/**/*.ts", "__mocks__/**/*.ts"]
+}
