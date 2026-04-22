@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repo profile writer now **unfences** README content and passes it through the sanitizer. L3 (README fenced) workaround removed.
 - **43 new tests** in `src/sanitize/body.test.ts` — one or more per defense, plus a combined-attack test (Templater + img + script + persist all together) that asserts neutralization. Total: **172 tests across 8 suites**.
 
+### Added (issue writer)
+- **`src/sync/issue-writer.ts`** — `syncRepoIssues(owner, repo, options)` fetches all open issues via `paginate`, filters PRs out of the issues feed, writes one file per issue at `02_AREAS/GitHub/Repos/{owner}__{repo}/Issues/{number}-{slug}.md`.
+- Per-issue frontmatter: `type`, `repo`, `number`, `state`, `title`, `labels`, `assignees`, `milestone`, `author`, `comments_count`, `created`, `updated`, `closed`, `html_url`, `last_synced`, `schema_version`, `tags`.
+- Body: H1 with number + title, state/author meta, labels / assignees / milestone, GitHub link, sanitized issue body, persist-block user notes section, NAV footer.
+- Re-sync preserves user persist blocks via the same `extractPersistBlocks` + `mergePersistBlocks` pattern as the repo profile writer.
+- New command: `GitHub Data: Sync all open issues`.
+- **10 new tests** in `src/sync/issue-writer.test.ts`. Total: **205 tests across 10 suites**.
+
 ### Added (persist-block utilities)
 - **`src/sanitize/persist.ts`** — `extractPersistBlocks(text)`, `mergePersistBlocks(newText, saved)`, `looksGithubSourced(content)`, `userPersistBlock(name, initial?)`. Implements Security Invariant H2 defensively.
 - Namespaced markers: `{% persist:user "name" %}...{% endpersist %}` survive re-sync; `{% persist:template "name" %}...{% endpersist %}` are transient and always replaced by the writer.

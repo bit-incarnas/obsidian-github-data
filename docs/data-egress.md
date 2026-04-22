@@ -4,13 +4,14 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 
 **Principle:** vault data stays in the vault. This plugin pulls data *in* from GitHub; it does not push vault contents *out* except when an explicit user-invoked command (in a future phase) requests it.
 
-## Current state (scaffold + HTTP layer + settings tab + repo profile writer)
+## Current state (scaffold + HTTP + settings + repo profile writer + issue writer)
 
 | Outbound call | Destination | Trigger | Payload | Notes |
 | :------------ | :---------- | :------ | :------ | :---- |
 | `GET /user` | `api.github.com` | User clicks "Test connection" in Settings -> GitHub Data | `Authorization: Bearer <PAT>`, `User-Agent: obsidian-github-data` headers; no body; no vault content | User-initiated. |
-| `GET /repos/{owner}/{repo}` | `api.github.com` | User runs `GitHub Data: Sync all repo profiles` command | Same auth + UA headers; path params only; no body; no vault content | User-initiated. One request per allowlisted repo. |
-| `GET /repos/{owner}/{repo}/readme` | `api.github.com` | Same command, same iteration | Same auth + UA headers; `Accept: application/vnd.github.raw` | User-initiated. 404 responses tolerated. |
+| `GET /repos/{owner}/{repo}` | `api.github.com` | User runs `GitHub Data: Sync all repo profiles` | Same auth + UA headers; path params only | User-initiated. One request per allowlisted repo. |
+| `GET /repos/{owner}/{repo}/readme` | `api.github.com` | Same command, same iteration | Same auth + UA; `Accept: application/vnd.github.raw` | User-initiated. 404 tolerated. |
+| `GET /repos/{owner}/{repo}/issues` | `api.github.com` | User runs `GitHub Data: Sync all open issues` | Same auth + UA; `state=open&per_page=100` query; multi-page via `Link` header | User-initiated. Paginated. |
 
 All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
 
