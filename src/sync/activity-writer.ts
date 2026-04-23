@@ -129,10 +129,19 @@ export async function syncActivity(
 		}
 	}
 
-	// Window: [now - windowDays, now] -- inclusive of today.
-	const from = new Date(now.getTime() - windowDays * 86_400_000);
-	const fromIso = from.toISOString();
-	const toIso = now.toISOString();
+	// Window aligned to UTC day boundaries so the query covers exactly
+	// `windowDays` full UTC days ending with today. Misalignment (e.g.
+	// querying "now minus 30 days" at 22:00 UTC) would return a partial
+	// first day that doesn't fill the first aggregation bucket.
+	const yr = now.getUTCFullYear();
+	const mo = now.getUTCMonth();
+	const day = now.getUTCDate();
+	const fromUtc = new Date(Date.UTC(yr, mo, day - (windowDays - 1), 0, 0, 0, 0));
+	const toUtc = new Date(
+		Date.UTC(yr, mo, day, 23, 59, 59, 999),
+	);
+	const fromIso = fromUtc.toISOString();
+	const toIso = toUtc.toISOString();
 
 	let data: ContributionsCollection;
 	try {
@@ -377,9 +386,13 @@ export function buildActivityBody(day: ActivityDay): string {
 
 	lines.push("---");
 	lines.push("## :: NAV");
-	lines.push(
-		`[[${day.date}]] | [[02_AREAS/GitHub/Activity/${day.date.slice(0, 7)}/${day.date}|Activity]]`,
-	);
+	// Ghost-link to the daily note; authors can add a back-link from
+	// their daily note if they want it to resolve. The second link we
+	// had previously was a self-link to the file being generated (and
+	// it hard-coded `02_AREAS/GitHub/Activity` -- ignoring a custom
+	// vaultRoot). Dropped entirely: a file doesn't need to link to
+	// itself, and removing it also addresses the hardcoded-root bug.
+	lines.push(`[[${day.date}]]`);
 	lines.push("");
 
 	return lines.join("\n");

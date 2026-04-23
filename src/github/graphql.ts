@@ -23,11 +23,24 @@
  *   window is 30 days so this is a future concern.
  *
  * Pagination:
- * - Commit contributions per repo and opened-PR/issue/review lists all
- *   use `first: 100`. For the default 30-day window that's a safe cap
- *   (a single repo rarely sees >100 commit-days or >100 opened PRs in a
- *   month). Longer windows or very active repos would need paging; we'll
- *   add it when cron/polling arrives and data volume demands it.
+ * - `pullRequestContributions`, `issueContributions`, and
+ *   `pullRequestReviewContributions` use cursor paging (`after` +
+ *   `pageInfo { endCursor hasNextPage }`). Each connection is paged
+ *   until `hasNextPage` is false or the safety cap (`MAX_PAGES`) is hit.
+ *   A cap warning surfaces via `onWarning` so the caller can log it.
+ * - `commitContributionsByRepository` takes a single `maxRepositories`
+ *   arg (GitHub's schema: not a cursored connection). Hard-capped at
+ *   100. If a window has more than 100 contributing repos, we surface
+ *   a truncation warning -- per-repo breakdown will be incomplete, but
+ *   `commits_total` on the main contributionCalendar would still be
+ *   correct if we queried it (we don't in v0.1; totals are summed from
+ *   the breakdown). This limit is a future concern only for users with
+ *   contributions to many different repos; Cap's solo-operator profile
+ *   stays well under.
+ * - Inner `contributions(first: 100)` per repo gives up to 100 days per
+ *   repo. For 30-365-day windows that's sufficient (a single repo can't
+ *   have more than `windowDays` distinct commit days). Unrestricted
+ *   inner paging would add another nested loop; deferred.
  */
 
 import type { GithubClient } from "./client";
@@ -89,15 +102,88 @@ export interface ReviewContribution {
 	};
 }
 
-interface ContributionsEnvelope {
-	user: { contributionsCollection: ContributionsCollection } | null;
+interface PageInfo {
+	endCursor: string | null;
+	hasNextPage: boolean;
+}
+
+interface MainQueryResponse {
+	user: {
+		contributionsCollection: {
+			totalCommitContributions: number;
+			totalIssueContributions: number;
+			totalPullRequestContributions: number;
+			totalPullRequestReviewContributions: number;
+			commitContributionsByRepository: CommitContributionsByRepo[];
+			pullRequestContributions: {
+				pageInfo: PageInfo;
+				nodes: PullRequestContribution[];
+			};
+			issueContributions: {
+				pageInfo: PageInfo;
+				nodes: IssueContribution[];
+			};
+			pullRequestReviewContributions: {
+				pageInfo: PageInfo;
+				nodes: ReviewContribution[];
+			};
+		};
+	} | null;
+}
+
+interface PaginatePullRequestsResponse {
+	user: {
+		contributionsCollection: {
+			pullRequestContributions: {
+				pageInfo: PageInfo;
+				nodes: PullRequestContribution[];
+			};
+		};
+	} | null;
+}
+
+interface PaginateIssuesResponse {
+	user: {
+		contributionsCollection: {
+			issueContributions: {
+				pageInfo: PageInfo;
+				nodes: IssueContribution[];
+			};
+		};
+	} | null;
+}
+
+interface PaginateReviewsResponse {
+	user: {
+		contributionsCollection: {
+			pullRequestReviewContributions: {
+				pageInfo: PageInfo;
+				nodes: ReviewContribution[];
+			};
+		};
+	} | null;
+}
+
+/**
+ * Safety cap on per-connection pagination. 100 nodes per page * 10
+ * pages = 1000 contributions per type in a single window. A user who
+ * legitimately exceeds this in 365 days is either (a) a maintainer of
+ * a very active OSS project or (b) a bot account -- either way, the
+ * rollup is sized for personal-activity tracking and we cap rather
+ * than run unbounded loops.
+ */
+const MAX_PAGES = 10;
+
+export interface FetchContributionsOptions {
+	/** Called when we hit a truncation or cap condition. */
+	onWarning?: (message: string) => void;
 }
 
 // -- queries --------------------------------------------------------------
 
 const VIEWER_QUERY = `query ViewerLogin { viewer { login } }`;
 
-const CONTRIBUTIONS_QUERY = `
+const MAIN_CONTRIBUTIONS_QUERY = `
 	query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
 		user(login: $login) {
 			contributionsCollection(from: $from, to: $to) {
@@ -115,6 +201,7 @@ const CONTRIBUTIONS_QUERY = `
 					}
 				}
 				pullRequestContributions(first: 100) {
+					pageInfo { endCursor hasNextPage }
 					nodes {
 						occurredAt
 						pullRequest {
@@ -128,6 +215,7 @@ const CONTRIBUTIONS_QUERY = `
 					}
 				}
 				issueContributions(first: 100) {
+					pageInfo { endCursor hasNextPage }
 					nodes {
 						occurredAt
 						issue {
@@ -139,6 +227,85 @@ const CONTRIBUTIONS_QUERY = `
 					}
 				}
 				pullRequestReviewContributions(first: 100) {
+					pageInfo { endCursor hasNextPage }
+					nodes {
+						occurredAt
+						pullRequest {
+							number
+							repository { nameWithOwner }
+						}
+					}
+				}
+			}
+		}
+	}
+`;
+
+const PAGINATE_PULL_REQUESTS_QUERY = `
+	query PaginatePullRequests(
+		$login: String!
+		$from: DateTime!
+		$to: DateTime!
+		$after: String!
+	) {
+		user(login: $login) {
+			contributionsCollection(from: $from, to: $to) {
+				pullRequestContributions(first: 100, after: $after) {
+					pageInfo { endCursor hasNextPage }
+					nodes {
+						occurredAt
+						pullRequest {
+							number
+							title
+							merged
+							mergedAt
+							closedAt
+							repository { nameWithOwner }
+						}
+					}
+				}
+			}
+		}
+	}
+`;
+
+const PAGINATE_ISSUES_QUERY = `
+	query PaginateIssues(
+		$login: String!
+		$from: DateTime!
+		$to: DateTime!
+		$after: String!
+	) {
+		user(login: $login) {
+			contributionsCollection(from: $from, to: $to) {
+				issueContributions(first: 100, after: $after) {
+					pageInfo { endCursor hasNextPage }
+					nodes {
+						occurredAt
+						issue {
+							number
+							title
+							closedAt
+							repository { nameWithOwner }
+						}
+					}
+				}
+			}
+		}
+	}
+`;
+
+const PAGINATE_REVIEWS_QUERY = `
+	query PaginateReviews(
+		$login: String!
+		$from: DateTime!
+		$to: DateTime!
+		$after: String!
+	) {
+		user(login: $login) {
+			contributionsCollection(from: $from, to: $to) {
+				pullRequestReviewContributions(first: 100, after: $after) {
+					pageInfo { endCursor hasNextPage }
 					nodes {
 						occurredAt
 						pullRequest {
@@ -162,21 +329,183 @@ export async function fetchViewerLogin(client: GithubClient): Promise<string> {
 
 /**
  * Fetch a user's contributionsCollection for an arbitrary [from, to]
- * window (ISO-8601 datetimes). Returns the parsed collection or throws
- * if the user isn't found / GraphQL errors.
+ * window (ISO-8601 datetimes). Follows cursor pagination on the three
+ * cursored connections until exhausted or until `MAX_PAGES` is hit.
+ *
+ * Warnings:
+ * - If `commitContributionsByRepository` comes back at exactly 100
+ *   entries, it may be truncated (per-repo breakdown incomplete).
+ * - If any cursored connection hits `MAX_PAGES`, that type's sample is
+ *   truncated.
  */
 export async function fetchContributionsCollection(
 	client: GithubClient,
 	login: string,
 	fromIso: string,
 	toIso: string,
+	options: FetchContributionsOptions = {},
 ): Promise<ContributionsCollection> {
-	const data = await client.graphql<ContributionsEnvelope>(
-		CONTRIBUTIONS_QUERY,
+	const warn =
+		options.onWarning ?? ((msg: string) => console.warn(`[graphql] ${msg}`));
+
+	const main = await client.graphql<MainQueryResponse>(
+		MAIN_CONTRIBUTIONS_QUERY,
 		{ login, from: fromIso, to: toIso },
 	);
-	if (!data.user) {
+	if (!main.user) {
 		throw new Error(`User not found: ${login}`);
 	}
-	return data.user.contributionsCollection;
+	const cc = main.user.contributionsCollection;
+
+	const commitsByRepo = cc.commitContributionsByRepository;
+	if (commitsByRepo.length >= 100) {
+		warn(
+			`commitContributionsByRepository returned ${commitsByRepo.length} repos (cap is 100); per-repo breakdown may be incomplete for this window.`,
+		);
+	}
+
+	const prs = [...cc.pullRequestContributions.nodes];
+	if (cc.pullRequestContributions.pageInfo.hasNextPage) {
+		const rest = await paginatePullRequests(
+			client,
+			login,
+			fromIso,
+			toIso,
+			cc.pullRequestContributions.pageInfo.endCursor ?? "",
+			warn,
+		);
+		prs.push(...rest);
+	}
+
+	const issues = [...cc.issueContributions.nodes];
+	if (cc.issueContributions.pageInfo.hasNextPage) {
+		const rest = await paginateIssues(
+			client,
+			login,
+			fromIso,
+			toIso,
+			cc.issueContributions.pageInfo.endCursor ?? "",
+			warn,
+		);
+		issues.push(...rest);
+	}
+
+	const reviews = [...cc.pullRequestReviewContributions.nodes];
+	if (cc.pullRequestReviewContributions.pageInfo.hasNextPage) {
+		const rest = await paginateReviews(
+			client,
+			login,
+			fromIso,
+			toIso,
+			cc.pullRequestReviewContributions.pageInfo.endCursor ?? "",
+			warn,
+		);
+		reviews.push(...rest);
+	}
+
+	return {
+		totalCommitContributions: cc.totalCommitContributions,
+		totalIssueContributions: cc.totalIssueContributions,
+		totalPullRequestContributions: cc.totalPullRequestContributions,
+		totalPullRequestReviewContributions:
+			cc.totalPullRequestReviewContributions,
+		commitContributionsByRepository: commitsByRepo,
+		pullRequestContributions: { nodes: prs },
+		issueContributions: { nodes: issues },
+		pullRequestReviewContributions: { nodes: reviews },
+	};
+}
+
+async function paginatePullRequests(
+	client: GithubClient,
+	login: string,
+	fromIso: string,
+	toIso: string,
+	firstCursor: string,
+	warn: (msg: string) => void,
+): Promise<PullRequestContribution[]> {
+	const acc: PullRequestContribution[] = [];
+	let cursor = firstCursor;
+	let pages = 0;
+	while (cursor) {
+		if (pages >= MAX_PAGES) {
+			warn(
+				`pullRequestContributions hit ${MAX_PAGES}-page cap (${MAX_PAGES * 100} nodes); remaining PRs in this window are omitted.`,
+			);
+			break;
+		}
+		const data = await client.graphql<PaginatePullRequestsResponse>(
+			PAGINATE_PULL_REQUESTS_QUERY,
+			{ login, from: fromIso, to: toIso, after: cursor },
+		);
+		if (!data.user) break;
+		const page = data.user.contributionsCollection.pullRequestContributions;
+		acc.push(...page.nodes);
+		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
+		pages += 1;
+	}
+	return acc;
+}
+
+async function paginateIssues(
+	client: GithubClient,
+	login: string,
+	fromIso: string,
+	toIso: string,
+	firstCursor: string,
+	warn: (msg: string) => void,
+): Promise<IssueContribution[]> {
+	const acc: IssueContribution[] = [];
+	let cursor = firstCursor;
+	let pages = 0;
+	while (cursor) {
+		if (pages >= MAX_PAGES) {
+			warn(
+				`issueContributions hit ${MAX_PAGES}-page cap (${MAX_PAGES * 100} nodes); remaining issues in this window are omitted.`,
+			);
+			break;
+		}
+		const data = await client.graphql<PaginateIssuesResponse>(
+			PAGINATE_ISSUES_QUERY,
+			{ login, from: fromIso, to: toIso, after: cursor },
+		);
+		if (!data.user) break;
+		const page = data.user.contributionsCollection.issueContributions;
+		acc.push(...page.nodes);
+		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
+		pages += 1;
+	}
+	return acc;
+}
+
+async function paginateReviews(
+	client: GithubClient,
+	login: string,
+	fromIso: string,
+	toIso: string,
+	firstCursor: string,
+	warn: (msg: string) => void,
+): Promise<ReviewContribution[]> {
+	const acc: ReviewContribution[] = [];
+	let cursor = firstCursor;
+	let pages = 0;
+	while (cursor) {
+		if (pages >= MAX_PAGES) {
+			warn(
+				`pullRequestReviewContributions hit ${MAX_PAGES}-page cap (${MAX_PAGES * 100} nodes); remaining reviews in this window are omitted.`,
+			);
+			break;
+		}
+		const data = await client.graphql<PaginateReviewsResponse>(
+			PAGINATE_REVIEWS_QUERY,
+			{ login, from: fromIso, to: toIso, after: cursor },
+		);
+		if (!data.user) break;
+		const page =
+			data.user.contributionsCollection.pullRequestReviewContributions;
+		acc.push(...page.nodes);
+		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
+		pages += 1;
+	}
+	return acc;
 }

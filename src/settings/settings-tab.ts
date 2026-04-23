@@ -78,11 +78,21 @@ export class GithubDataSettingTab extends PluginSettingTab {
 				text.inputEl.type = "number";
 				text.inputEl.min = "1";
 				text.inputEl.max = "365";
-				text.setValue(String(this.plugin.settings.activitySyncDays));
-				text.onChange(async (value) => {
+				// Track the most recent valid input; commit once on blur
+				// rather than saving on every keystroke. Stops transient
+				// invalid states (e.g. typing "365" passes through 3, 36)
+				// from triggering N separate saves.
+				let pending = this.plugin.settings.activitySyncDays;
+				text.setValue(String(pending));
+				text.onChange((value) => {
 					const n = Number.parseInt(value, 10);
-					if (!Number.isFinite(n) || n < 1 || n > 365) return;
-					this.plugin.settings.activitySyncDays = n;
+					if (Number.isFinite(n) && n >= 1 && n <= 365) {
+						pending = n;
+					}
+				});
+				text.inputEl.addEventListener("blur", async () => {
+					if (pending === this.plugin.settings.activitySyncDays) return;
+					this.plugin.settings.activitySyncDays = pending;
 					await this.plugin.saveSettings();
 				});
 			});

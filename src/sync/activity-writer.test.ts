@@ -8,6 +8,7 @@ import type { ContributionsCollection } from "../github/graphql";
 import type { GithubClient } from "../github/client";
 import { InMemoryVaultWriter } from "../vault/writer";
 
+/** Flat collection shape used by the aggregator tests (no pageInfo). */
 function emptyCollection(): ContributionsCollection {
 	return {
 		totalCommitContributions: 0,
@@ -18,6 +19,43 @@ function emptyCollection(): ContributionsCollection {
 		pullRequestContributions: { nodes: [] },
 		issueContributions: { nodes: [] },
 		pullRequestReviewContributions: { nodes: [] },
+	};
+}
+
+/**
+ * Builds the nested wire shape that the GraphQL client returns for the
+ * main contributionsCollection query, including empty pageInfo on the
+ * three cursored connections so `fetchContributionsCollection` exits
+ * without issuing paginate queries. Covers the common case for end-
+ * to-end sync tests.
+ */
+function mainResponse(
+	overrides: Partial<ContributionsCollection> = {},
+): unknown {
+	const base = { ...emptyCollection(), ...overrides };
+	return {
+		user: {
+			contributionsCollection: {
+				totalCommitContributions: base.totalCommitContributions,
+				totalIssueContributions: base.totalIssueContributions,
+				totalPullRequestContributions: base.totalPullRequestContributions,
+				totalPullRequestReviewContributions:
+					base.totalPullRequestReviewContributions,
+				commitContributionsByRepository: base.commitContributionsByRepository,
+				pullRequestContributions: {
+					pageInfo: { endCursor: null, hasNextPage: false },
+					nodes: base.pullRequestContributions.nodes,
+				},
+				issueContributions: {
+					pageInfo: { endCursor: null, hasNextPage: false },
+					nodes: base.issueContributions.nodes,
+				},
+				pullRequestReviewContributions: {
+					pageInfo: { endCursor: null, hasNextPage: false },
+					nodes: base.pullRequestReviewContributions.nodes,
+				},
+			},
+		},
 	};
 }
 
@@ -330,9 +368,7 @@ describe("syncActivity", () => {
 				},
 			},
 		];
-		const client = mockClient(async () => ({
-			user: { contributionsCollection: data },
-		}));
+		const client = mockClient(async () => mainResponse(data));
 
 		const result = await syncActivity(baseOptions(writer, client));
 
@@ -363,9 +399,7 @@ describe("syncActivity", () => {
 				},
 			},
 		];
-		const client = mockClient(async () => ({
-			user: { contributionsCollection: data },
-		}));
+		const client = mockClient(async () => mainResponse(data));
 
 		await syncActivity(baseOptions(writer, client));
 
@@ -393,9 +427,7 @@ describe("syncActivity", () => {
 				},
 			},
 		];
-		const client = mockClient(async () => ({
-			user: { contributionsCollection: data },
-		}));
+		const client = mockClient(async () => mainResponse(data));
 
 		// First sync
 		await syncActivity(baseOptions(writer, client));
@@ -428,7 +460,7 @@ describe("syncActivity", () => {
 			if (query.includes("ViewerLogin")) {
 				return { viewer: { login: "auto-resolved" } };
 			}
-			return { user: { contributionsCollection: emptyCollection() } };
+			return mainResponse();
 		});
 		const client = mockClient(graphql);
 
@@ -481,23 +513,44 @@ describe("syncActivity", () => {
 		expect(result.reason).toContain("rate limited");
 	});
 
-	test("window derived from windowDays (default 30)", async () => {
+	test("window spans windowDays full UTC days ending today (7 requested)", async () => {
 		const writer = new InMemoryVaultWriter();
 		const graphql = jest.fn(
-			async (_query: string, _variables?: Record<string, unknown>) => ({
-				user: { contributionsCollection: emptyCollection() },
-			}),
+			async (_query: string, _variables?: Record<string, unknown>) =>
+				mainResponse(),
 		);
 		const client = mockClient(graphql);
 
 		await syncActivity(baseOptions(writer, client, { windowDays: 7 }));
 
 		const callVars = graphql.mock.calls[0][1] as Record<string, string>;
-		const fromDate = new Date(callVars.from);
-		const toDate = new Date(callVars.to);
-		const diffDays = (toDate.getTime() - fromDate.getTime()) / 86_400_000;
-		expect(diffDays).toBeCloseTo(7, 1);
-		expect(toDate.toISOString()).toBe(FIXED_NOW.toISOString());
+		// FIXED_NOW = 2026-04-22T12:00:00Z. With 7-day window aligned to
+		// UTC boundaries: from = 2026-04-16T00:00:00.000Z, to =
+		// 2026-04-22T23:59:59.999Z. Covers 7 full UTC days.
+		expect(callVars.from).toBe("2026-04-16T00:00:00.000Z");
+		expect(callVars.to).toBe("2026-04-22T23:59:59.999Z");
+	});
+
+	test("defaults to a 30-day window when windowDays is not supplied", async () => {
+		const writer = new InMemoryVaultWriter();
+		const graphql = jest.fn(
+			async (_query: string, _variables?: Record<string, unknown>) =>
+				mainResponse(),
+		);
+		const client = mockClient(graphql);
+
+		await syncActivity({
+			client,
+			writer,
+			login: "bit-incarnas",
+			now: () => FIXED_NOW,
+			// windowDays deliberately omitted
+		});
+
+		const callVars = graphql.mock.calls[0][1] as Record<string, string>;
+		// 30-day window ending 2026-04-22 -> from = 2026-03-24T00:00Z.
+		expect(callVars.from).toBe("2026-03-24T00:00:00.000Z");
+		expect(callVars.to).toBe("2026-04-22T23:59:59.999Z");
 	});
 
 	test("writes into correct YYYY-MM subfolder", async () => {
@@ -511,9 +564,7 @@ describe("syncActivity", () => {
 				},
 			},
 		];
-		const client = mockClient(async () => ({
-			user: { contributionsCollection: data },
-		}));
+		const client = mockClient(async () => mainResponse(data));
 
 		await syncActivity(baseOptions(writer, client));
 

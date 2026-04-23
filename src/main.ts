@@ -113,7 +113,7 @@ export default class GithubDataPlugin extends Plugin {
 			`GitHub Data: syncing activity (last ${windowDays} day${windowDays === 1 ? "" : "s"})...`,
 		);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		const result = await syncActivity({ client, writer, windowDays });
