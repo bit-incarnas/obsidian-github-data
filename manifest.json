@@ -1,7 +1,7 @@
 {
 	"id": "github-data",
 	"name": "GitHub Data",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"minAppVersion": "1.0.0",
 	"description": "Mirror GitHub state (repos, issues, PRs, releases, Dependabot, Actions, contribution activity) into vault-native markdown. Pull-in only; vault data stays in the vault.",
 	"author": "bit-incarnas",
