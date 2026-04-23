@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (codeblock processor)
+- **`src/codeblock/yaml.ts`** — parses YAML codeblock bodies via Obsidian's `parseYaml`, validates per-type schemas (`github-issue` / `github-pr` / `github-release` / `github-dependabot`), rejects unknown fields (so pasted codeblocks can't smuggle in scope-widening qualifiers), enforces `repo` owner/repo pattern, `limit` range 1-100, list-of-string shape on `labels`/`columns`, typed enums on `state`/`severity`/`sort`/`is_draft`/`prerelease`/`ecosystem`. Size guard at 8 KB chars short-circuits pathological YAML before parsing.
+- **`src/codeblock/query.ts`** — pure function `queryEntities(records, args)` that filters frontmatter records by codeblock type + per-type predicates (repo, state, labels AND, author, severity, ecosystem, is_draft, prerelease), sorts (`updated`/`number`/`published` asc/desc; `github-dependabot` sorts severity-desc then updated-desc), and applies the configured limit.
+- **`src/codeblock/renderer.ts`** — DOM table builder. Default columns per type; `columns:` arg overrides. File cells render as `class="internal-link"` anchors so Obsidian's click handler resolves them like wiki-links; `html_url` cells render as external links; booleans as `yes`/`no`; arrays as comma-joined. Empty-state + error-tile helpers.
+- **`src/codeblock/processor.ts`** — registers four `registerMarkdownCodeBlockProcessor` handlers. Pipeline per render: parse+validate -> allowlist check (H3; uses case-insensitive `isRepoAllowlisted`) -> scan `02_AREAS/GitHub/Repos/**` via `app.metadataCache.getFileCache` -> filter via the query engine -> render. Any failure renders as an inline warning tile instead of throwing, so a bad codeblock doesn't break the note.
+- **`src/main.ts`** — calls `registerCodeblockProcessors` from `onload`. No new commands.
+- **Safety posture**: `source: synced` only in v0.1 -- the codeblock processor never issues live GitHub requests. Live-fetch lands with the cron slice where the rate-limit wrapper can debounce + cache. YAML-bomb defense via size guard + Obsidian's vetted parser.
+- **71 new tests across 4 suites** (`yaml.test.ts`, `query.test.ts`, `renderer.test.ts`, `processor.test.ts`) covering field validation (per-type allowlists, range checks, type guards), filter semantics (state/labels-AND/author/severity/ecosystem/is_draft/prerelease), sort orderings, edge cases (empty, non-string frontmatter), DOM output (internal-link anchors, column overrides, empty-state, error tiles), and the processor's end-to-end flow including allowlist enforcement (positive + case-insensitive match, negative refusal). Total: **421 tests across 24 suites**.
+- **README** gained a Codeblocks section with YAML schemas + examples per type.
+- Bundle growth: 157 KB -> 167 KB (~10 KB for yaml/query/renderer/processor; no new deps).
+
+### Data egress (codeblock processor)
+- **No new endpoints.** Codeblocks query the local vault tree via `metadataCache`; zero network calls on render. Egress table unchanged.
+
 ### Added (activity aggregator)
 - **`src/github/graphql.ts`** — typed wrappers over `client.graphql()` for the two GraphQL queries we need: `fetchViewerLogin` (one-shot `{ viewer { login } }`) and `fetchContributionsCollection(login, from, to)` which returns commits-by-repo + opened PRs (with `merged` / `mergedAt` sub-shape) + opened issues (with `closedAt`) + reviews given. First use of GraphQL in the plugin; wires through Octokit's built-in `client.graphql()` so it benefits from the same auth + HTTP transport.
 - **`src/sync/activity-writer.ts`** — `syncActivity(options)` fetches the user's contributionsCollection for the configured window, aggregates into per-day rollups via the pure `aggregateActivityByDay(data)` function, and writes one file per active day at `02_AREAS/GitHub/Activity/YYYY-MM/YYYY-MM-DD.md`.

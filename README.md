@@ -69,6 +69,49 @@ Every outbound call this plugin can make, exhaustively documented:
 
 **No background polls. No scheduled syncs. No auto-fetches on startup.** Every call is user-initiated via a settings button or command-palette command. Vault content never leaves the vault.
 
+## Codeblocks
+
+Four `github-*` codeblocks render tables inline in any note, querying the vault's synced entity files (never the live API) via `metadataCache`. Allowlist is enforced at render time -- queries against unallowlisted repos render an error tile instead of data.
+
+````markdown
+```github-issue
+repo: bit-incarnas/eden
+state: open
+labels:
+  - bug
+limit: 10
+```
+
+```github-pr
+repo: bit-incarnas/eden
+state: open
+is_draft: false
+sort: number-desc
+```
+
+```github-release
+repo: bit-incarnas/eden
+prerelease: false
+limit: 5
+```
+
+```github-dependabot
+repo: bit-incarnas/eden
+severity: high
+```
+````
+
+Per-type fields:
+
+| Codeblock | Filters |
+| :-------- | :------ |
+| `github-issue` | `repo`, `state` (`open|closed|all`), `labels` (list, AND), `author`, `sort` (`updated-desc`/`-asc`, `number-desc`/`-asc`), `limit` (1-100), `columns` |
+| `github-pr` | issue fields + `is_draft` (true/false) |
+| `github-release` | `repo`, `prerelease`, `sort` (`published-desc`/`-asc`), `limit`, `columns` |
+| `github-dependabot` | `repo`, `severity` (`critical|high|medium|low|all`), `state` (`open|all`), `ecosystem`, `limit`, `columns` |
+
+Each codeblock type has sensible default columns; override via `columns: [number, title]` etc. Queries are `source: synced` only in this release -- they read `02_AREAS/GitHub/Repos/{owner}__{repo}/**` and never fire live API calls.
+
 ## Settings
 
 | Setting | Purpose |

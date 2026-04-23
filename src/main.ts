@@ -1,5 +1,6 @@
 import { Notice, Plugin } from "obsidian";
 
+import { registerCodeblockProcessors } from "./codeblock/processor";
 import { CircuitBreaker } from "./github/circuit-breaker";
 import { createGithubClient, type GithubClient } from "./github/client";
 import { Semaphore } from "./github/concurrency";
@@ -92,6 +93,14 @@ export default class GithubDataPlugin extends Plugin {
 			callback: () => {
 				void this.syncActivityFeed();
 			},
+		});
+
+		// Codeblock processors: github-issue / github-pr / github-release /
+		// github-dependabot. Queries run against the synced vault tree via
+		// metadataCache; no network calls on render.
+		registerCodeblockProcessors(this, {
+			app: this.app,
+			getSettings: () => this.settings,
 		});
 
 		this.app.workspace.onLayoutReady(() => {
