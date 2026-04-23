@@ -138,9 +138,15 @@ function filterByLabels(
 	labels: string[] | undefined,
 ): EntityRecord[] {
 	if (!labels || labels.length === 0) return records;
+	// Match case-insensitively: GitHub label display is preserved as the
+	// author wrote it ("Bug" vs "bug"), but users expect their codeblock
+	// args to match regardless of casing. Normalize both sides.
+	const requested = labels.map((l) => l.toLowerCase());
 	return records.filter((r) => {
-		const rowLabels = asStringArray(r.frontmatter.labels);
-		return labels.every((requested) => rowLabels.includes(requested));
+		const rowLabels = asStringArray(r.frontmatter.labels).map((l) =>
+			l.toLowerCase(),
+		);
+		return requested.every((req) => rowLabels.includes(req));
 	});
 }
 

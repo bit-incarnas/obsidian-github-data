@@ -89,6 +89,44 @@ describe("scanEntityRecords", () => {
 		expect(rec.frontmatter).not.toHaveProperty("position");
 		expect(rec.frontmatter.type).toBe("github_issue");
 	});
+
+	test("directory-boundary check rejects sibling prefixes", () => {
+		// Classic startsWith bug: "02_AREAS/GitHub" would naively match
+		// "02_AREAS/GitHub_Other_Folder/anything.md". The isInsideRoot
+		// check requires a trailing `/` after the root.
+		const app = makeApp([
+			{
+				path: "02_AREAS/GitHub/Repos/x__y/Issues/1.md",
+				frontmatter: { type: "github_issue", number: 1 },
+			},
+			{
+				path: "02_AREAS/GitHub_Other_Folder/foo.md",
+				frontmatter: { type: "github_issue", number: 99 },
+			},
+			{
+				path: "02_AREAS/GitHub_Notes/bar.md",
+				frontmatter: { type: "github_issue", number: 100 },
+			},
+		]);
+		const out = scanEntityRecords(app, "02_AREAS/GitHub/Repos");
+		expect(out).toHaveLength(1);
+		expect(out[0].path).toBe("02_AREAS/GitHub/Repos/x__y/Issues/1.md");
+	});
+
+	test("accepts trailing-slash form of vaultRoot equivalently", () => {
+		const app = makeApp([
+			{
+				path: "02_AREAS/GitHub/Repos/x__y/Issues/1.md",
+				frontmatter: { type: "github_issue", number: 1 },
+			},
+		]);
+		expect(
+			scanEntityRecords(app, "02_AREAS/GitHub/Repos/"),
+		).toHaveLength(1);
+		expect(
+			scanEntityRecords(app, "02_AREAS/GitHub/Repos"),
+		).toHaveLength(1);
+	});
 });
 
 describe("processCodeblock -- errors", () => {
@@ -209,5 +247,70 @@ describe("processCodeblock -- happy path", () => {
 		const el = document.createElement("div");
 		processCodeblock("", el, "github-issue", deps);
 		expect(el.querySelector(".github-data-empty")).not.toBeNull();
+	});
+
+	test("omitted repo: arg -- records from non-allowlisted repos are dropped", () => {
+		// Simulate a vault that has synced files for two repos, where
+		// only one is currently allowlisted (the other was removed from
+		// the allowlist after its last sync).
+		const app = makeApp([
+			{
+				path: "02_AREAS/GitHub/Repos/x__y/Issues/1-a.md",
+				frontmatter: {
+					type: "github_issue",
+					repo: "x/y",
+					state: "open",
+					number: 1,
+					title: "Kept issue",
+				},
+			},
+			{
+				path: "02_AREAS/GitHub/Repos/z__stale/Issues/2-b.md",
+				frontmatter: {
+					type: "github_issue",
+					repo: "z/stale",
+					state: "open",
+					number: 2,
+					title: "Stale issue",
+				},
+			},
+		]);
+		const deps: ProcessorDeps = {
+			app,
+			getSettings: () => makeSettings(["x/y"]),
+		};
+		const el = document.createElement("div");
+
+		// No repo: arg -> "all my repos". Stale record should be filtered out.
+		processCodeblock("", el, "github-issue", deps);
+
+		const rows = el.querySelectorAll("tbody tr");
+		expect(rows).toHaveLength(1);
+		expect(rows[0].textContent).toContain("Kept issue");
+		expect(rows[0].textContent).not.toContain("Stale issue");
+	});
+
+	test("unexpected throw in pipeline renders error tile (doesn't break note)", () => {
+		const el = document.createElement("div");
+		const crashingApp = {
+			vault: {
+				getMarkdownFiles: () => {
+					throw new Error("simulated metadataCache crash");
+				},
+			},
+			metadataCache: { getFileCache: () => null },
+		} as unknown as import("obsidian").App;
+		const deps: ProcessorDeps = {
+			app: crashingApp,
+			getSettings: () => makeSettings(),
+		};
+
+		// Should NOT throw; should render an error tile with the message.
+		expect(() =>
+			processCodeblock("", el, "github-issue", deps),
+		).not.toThrow();
+		const warn = el.querySelector(".github-data-codeblock-error");
+		expect(warn).not.toBeNull();
+		expect(warn!.textContent).toMatch(/simulated metadataCache crash/);
 	});
 });

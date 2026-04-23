@@ -99,6 +99,30 @@ describe("queryEntities -- github-issue", () => {
 		expect(out.map((r) => r.path)).toEqual(["c"]);
 	});
 
+	test("labels filter is case-insensitive", () => {
+		// Mixed-case both sides -- the user typed `Bug` in their codeblock,
+		// the issue frontmatter stores `bug` (or vice versa).
+		const mixedCase = [
+			rec("a", {
+				type: "github_issue",
+				repo: "x/y",
+				state: "open",
+				labels: ["Bug", "SECURITY"],
+			}),
+		];
+		const out = queryEntities(mixedCase, {
+			type: "github-issue",
+			labels: ["bug", "security"],
+		});
+		expect(out.map((r) => r.path)).toEqual(["a"]);
+
+		const out2 = queryEntities(mixedCase, {
+			type: "github-issue",
+			labels: ["BUG"],
+		});
+		expect(out2.map((r) => r.path)).toEqual(["a"]);
+	});
+
 	test("author filter", () => {
 		const out = queryEntities(base, {
 			type: "github-issue",

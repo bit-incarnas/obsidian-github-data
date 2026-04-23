@@ -153,15 +153,16 @@ function renderCell(td: HTMLElement, col: string, rec: EntityRecord): void {
 function renderFileLink(td: HTMLElement, rec: EntityRecord): void {
 	// Use Obsidian's internal-link convention. Click handler inside
 	// Obsidian resolves `data-href` to the target note, so the rendered
-	// anchor behaves like a wiki-link at runtime.
+	// anchor behaves like a wiki-link at runtime. Do NOT set
+	// `target="_blank"` / `rel="noopener"` -- those are for external
+	// links and would cause Obsidian to open the link in a browser
+	// instead of letting the in-vault click handler navigate.
 	const basename = rec.path.split("/").pop()?.replace(/\.md$/, "") ?? rec.path;
 	const a = document.createElement("a");
 	a.className = "internal-link";
 	a.textContent = basename;
 	a.setAttribute("data-href", rec.path);
 	a.setAttribute("href", rec.path);
-	a.setAttribute("target", "_blank");
-	a.setAttribute("rel", "noopener");
 	td.appendChild(a);
 }
 

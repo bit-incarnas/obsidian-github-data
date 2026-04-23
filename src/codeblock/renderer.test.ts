@@ -67,6 +67,14 @@ describe("renderResultsTable -- issue table", () => {
 		expect(a!.textContent).toBe("42-bug");
 	});
 
+	test("internal-link anchor does NOT set target or rel (would break in-vault nav)", () => {
+		const el = newEl();
+		renderResultsTable(el, records, { type: "github-issue" });
+		const a = el.querySelector("tbody td:first-child a.internal-link");
+		expect(a!.getAttribute("target")).toBeNull();
+		expect(a!.getAttribute("rel")).toBeNull();
+	});
+
 	test("renders labels as comma-separated string", () => {
 		const el = newEl();
 		renderResultsTable(el, records, { type: "github-issue" });
