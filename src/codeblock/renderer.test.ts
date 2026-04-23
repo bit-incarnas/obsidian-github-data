@@ -164,6 +164,54 @@ describe("renderResultsTable -- cell types", () => {
 		expect(a!.getAttribute("target")).toBe("_blank");
 	});
 
+	test("URL cell rejects non-http(s) schemes (renders as plain text)", () => {
+		const dangerous = [
+			"javascript:alert(1)",
+			"data:text/html,<script>alert(1)</script>",
+			"file:///etc/passwd",
+			"obsidian://open?vault=X",
+			"not a url at all",
+		];
+		for (const raw of dangerous) {
+			const el = newEl();
+			renderResultsTable(
+				el,
+				[
+					{
+						path: "a.md",
+						frontmatter: { type: "github_issue", html_url: raw },
+					},
+				],
+				{ type: "github-issue", columns: ["html_url"] },
+			);
+			// No anchor element should be created for unsafe schemes.
+			expect(el.querySelector("tbody td a")).toBeNull();
+			// But the raw value is still visible as text (so users see
+			// what's in the frontmatter without being able to click it).
+			expect(el.querySelector("tbody td")?.textContent).toBe(raw);
+		}
+	});
+
+	test("URL cell accepts http:// in addition to https://", () => {
+		const el = newEl();
+		renderResultsTable(
+			el,
+			[
+				{
+					path: "a.md",
+					frontmatter: {
+						type: "github_issue",
+						html_url: "http://localhost:3000/dev",
+					},
+				},
+			],
+			{ type: "github-issue", columns: ["html_url"] },
+		);
+		const a = el.querySelector("tbody td a");
+		expect(a).not.toBeNull();
+		expect(a!.getAttribute("href")).toBe("http://localhost:3000/dev");
+	});
+
 	test("missing / null / undefined cells render as empty text", () => {
 		const el = newEl();
 		renderResultsTable(

@@ -136,12 +136,20 @@ function renderCell(td: HTMLElement, col: string, rec: EntityRecord): void {
 	if (col === "html_url" || col === "url") {
 		const raw = rec.frontmatter[col];
 		if (typeof raw === "string" && raw.length > 0) {
-			const a = document.createElement("a");
-			a.textContent = raw;
-			a.href = raw;
-			a.setAttribute("target", "_blank");
-			a.setAttribute("rel", "noopener noreferrer");
-			td.appendChild(a);
+			if (isSafeHttpUrl(raw)) {
+				const a = document.createElement("a");
+				a.textContent = raw;
+				a.href = raw;
+				a.setAttribute("target", "_blank");
+				a.setAttribute("rel", "noopener noreferrer");
+				td.appendChild(a);
+			} else {
+				// Non-http(s) -- e.g. `javascript:`, `data:`, or a malformed
+				// value that slipped past the sanitizer / was hand-edited.
+				// Render as plain text so the value is visible but not
+				// clickable.
+				td.textContent = raw;
+			}
 		}
 		return;
 	}
@@ -175,4 +183,21 @@ function stringify(v: unknown): string {
 	if (Array.isArray(v)) return v.map((x) => String(x)).join(", ");
 	if (typeof v === "boolean") return v ? "yes" : "no";
 	return String(v);
+}
+
+/**
+ * Scheme allowlist for URL cells. Only `http:` / `https:` get rendered
+ * as clickable anchors; everything else (including `javascript:`,
+ * `data:`, `file:`, `obsidian:`, malformed URLs) renders as plain text.
+ * Defense in depth: even though frontmatter flows from our own writers
+ * (which normalize GitHub's `html_url`), hand-edited vaults or future
+ * columns sourced from less-trusted data shouldn't bypass this check.
+ */
+function isSafeHttpUrl(raw: string): boolean {
+	try {
+		const url = new URL(raw);
+		return url.protocol === "http:" || url.protocol === "https:";
+	} catch {
+		return false;
+	}
 }
