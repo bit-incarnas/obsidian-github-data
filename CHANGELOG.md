@@ -7,13 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (activity aggregator)
+- **`src/github/graphql.ts`** — typed wrappers over `client.graphql()` for the two GraphQL queries we need: `fetchViewerLogin` (one-shot `{ viewer { login } }`) and `fetchContributionsCollection(login, from, to)` which returns commits-by-repo + opened PRs (with `merged` / `mergedAt` sub-shape) + opened issues (with `closedAt`) + reviews given. First use of GraphQL in the plugin; wires through Octokit's built-in `client.graphql()` so it benefits from the same auth + HTTP transport.
+- **`src/sync/activity-writer.ts`** — `syncActivity(options)` fetches the user's contributionsCollection for the configured window, aggregates into per-day rollups via the pure `aggregateActivityByDay(data)` function, and writes one file per active day at `02_AREAS/GitHub/Activity/YYYY-MM/YYYY-MM-DD.md`.
+- Aggregation rules: `commits_total` summed across repos on each UTC day; `prs_opened` / `issues_opened` / `reviews_given` counted on their `occurredAt` date; `prs_merged` derived from each PR's `mergedAt` (counted on merge date, not open date); `issues_closed` from each issue's `closedAt`. Per-repo breakdown captures commits / PRs-opened / issues-opened / reviews-given per repo.
+- Frontmatter schema (`type: github_activity_day`, `schema_version: 1`): `date`, `commits_total`, `prs_opened`, `prs_merged`, `issues_opened`, `issues_closed`, `reviews_given`, `releases` (always 0 in this slice -- cross-ref to Releases/ or REST fan-out lands in a follow-up), `last_synced`, `tags: ["github", "activity"]`.
+- Body: summary table, per-repo breakdown table (commits-desc ordered), `## :: YOUR NOTES` section with a `{% persist:user "notes" %}` block that survives re-sync via `extractPersistBlocks` + `mergePersistBlocks`.
+- **`src/settings/types.ts`** — new `activitySyncDays: number` setting (default 30, max 365 to respect GitHub's contributionsCollection 1-year cap per query). `mergeSettings` coerces + clamps persisted values to the valid range (1-365); malformed / missing / out-of-range values fall back to the default 30.
+- **`src/settings/settings-tab.ts`** — new "Activity" section with a number input for the window; commits once on blur rather than on every keystroke (stops transient mid-typing values from triggering N saves).
+- **`src/main.ts`** — new command `GitHub Data: Sync activity`. Total commands: 7. Funnels through the shared `this.createClient(token)` factory so activity syncs share the plugin-lifetime rate-limit / circuit / concurrency state with the other sync commands.
+- Activity is user-centric, NOT filtered by repo allowlist -- the point is to capture the full contribution picture (the allowlist governs file-per-entity writes, which are repo-centric).
+- **33 new tests across 2 suites** in `graphql.test.ts` (13) and `activity-writer.test.ts` (20) covering aggregation correctness, frontmatter emission, persist-block preservation on re-sync, viewer-login auto-resolution, GraphQL error paths, window derivation (UTC-aligned + default fallback), cursor pagination across all three cursored connections, and truncation warnings. Total: **350 tests across 20 suites** (on top of the rate-limit discipline base).
+
+### Data egress (activity aggregator)
+- New egress: `POST /graphql` to `api.github.com`. Body = GraphQL query + variables (login, from, to ISO-8601 datetimes); never contains vault data.
+- Per `Sync activity` invocation: one `viewer { login }` query whenever the caller omits `login` (no automatic session cache -- callers that want to skip this can pass `login` explicitly), plus one `Contributions` main query, plus up to 10 per-connection follow-up queries per cursored connection (pullRequest / issue / review) when pagination is needed. Typical 30-day window fires 1-2 GraphQL calls.
+- All existing call properties still hold: user-initiated, no telemetry, no third-party egress, PAT-only-in-Authorization-header.
+
+### Fixed (activity-aggregator review pass)
+- **Window alignment**: `syncActivity` now snaps `from`/`to` to UTC day boundaries (`from` = 00:00:00.000Z of `today - windowDays + 1`; `to` = 23:59:59.999Z of today). Previously used `now - windowDays * 86_400_000`, which mis-aligned with the UTC-day aggregation buckets (first day was partial depending on the local-clock hour at sync time).
+- **GraphQL cursor pagination**: `fetchContributionsCollection` now follows `pageInfo.hasNextPage` cursors on `pullRequestContributions`, `issueContributions`, and `pullRequestReviewContributions`. 100-page safety cap per connection with a warning via optional `onWarning` callback. `commitContributionsByRepository` stays at the `maxRepositories: 100` hard cap (GitHub schema limit); warning surfaces when a window returns >=100 repos so the user knows the per-repo breakdown is truncated.
+- **mergeSettings clamp**: new `clampActivitySyncDays(raw)` helper sanitizes persisted values (string/number coercion, NaN / missing / negative / overflow all fall back to default 30; upper bound clamped at 365).
+- **Shared client in `syncActivityFeed`**: switched from `createGithubClient({ token })` to `this.createClient(token)` so activity syncs share plugin-lifetime rate-limit / circuit / concurrency state (matches the other sync commands).
+- **`buildActivityBody` self-link removed**: the NAV footer previously contained a hard-coded self-link `[[02_AREAS/GitHub/Activity/.../date|Activity]]` that (a) linked to itself, (b) ignored a custom `vaultRoot`. Dropped in favor of the single ghost-link `[[YYYY-MM-DD]]` to the daily note.
+- **Settings input blur commit**: the `activitySyncDays` input now persists on blur rather than every keystroke (see above).
+- **Test rename**: `activity-writer.test.ts` "window derived from windowDays (default 30)" split into two tests -- one for explicit `windowDays: 7` and one for the default-fallback case -- so the title matches behavior.
+
 ### Added (rate-limit discipline)
 - **`src/github/rate-limit.ts`** — `RateLimitTracker` records `X-RateLimit-{Limit, Remaining, Reset, Used, Resource}` from every response. Plugin-lifetime instance (constructed once in `main.ts`, shared across every sync command) so the budget is global. `isLow()` (default threshold: 500 per security-review H5), `msUntilReset()`, `remainingRatio()` for throttle decisions.
 - **`src/github/backoff.ts`** — `computeBackoff(attempt, opts)` returns `base * 2^attempt + jitter`, capped at 1hr (failure-mode table). Jitter prevents multi-device synchronized retry storms. `sleep(ms)` helper. Random + sleep injected for tests.
 - **`src/github/circuit-breaker.ts`** — `CircuitBreaker` + `CircuitOpenError`. Opens after 2 consecutive 401s (design threshold); opens immediately on 403-with-`x-github-sso: required`. Once open, further requests throw `CircuitOpenError` *without* firing inner; preserves all synced vault data (the design's explicit preservation requirement on 401 twice). `recordSuccess` clears the counter on any non-auth-failing response. Reset UX lands with the cron slice.
 - **`src/github/concurrency.ts`** — FIFO `Semaphore` caps in-flight requests at 4 (failure-mode table). `run(fn)` acquires/releases via try/finally so slots never leak on throw.
 - **`src/github/fetch-wrapper.ts`** — `wrapWithRateLimit` composes the above into a `typeof fetch` decorator that sits between Octokit and the transport layer. Retry logic per the failure-mode table: 401 once → retry; 401 twice → trip circuit + propagate; 403-SSO → trip circuit; 403-rate-limit → sleep until `X-RateLimit-Reset`; 429 → sleep `max(Retry-After, exp-backoff)`; 5xx → exp-backoff + jitter; `status === 0` / TypeError → exp-backoff + retry. Success (2xx/3xx) clears the 401 counter.
-- **`src/main.ts`** — plugin now holds `rateLimit`, `circuit`, `concurrency` as plugin-lifetime fields; all 5 sync commands funnel through `createClient(token)` so a 401 in one command trips for all subsequent commands (user acts once, resets once). Settings-tab's Test-Connection still uses isolated state so re-testing after a token swap always fires.
+- **`src/main.ts`** — plugin now holds `rateLimit`, `circuit`, `concurrency` as plugin-lifetime fields; all 6 sync commands funnel through `createClient(token)` so a 401 in one command trips for all subsequent commands (user acts once, resets once). Settings-tab's Test-Connection still uses isolated state so re-testing after a token swap always fires.
 - Distinguishing 403 rate-limit (`X-RateLimit-Remaining: 0` or body mentioning "rate limit") from 403 auth (propagated, no retry).
 - `Retry-After` parsing handles both integer seconds and HTTP-date formats.
 - Bundle growth: 141 KB → 146 KB (~5 KB for the wrapper + state classes; unchanged Octokit surface).
@@ -28,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **404-archive / 410-delete semantics** — touches writers + user-confirmation dialog for 410. Separate retention-policy slice.
 - **Multi-device soft-mutex** (H6) — separate candidate; uses `last_synced` comparison across devices.
 - **CircuitBreaker reset UX** — Settings-tab action to reset after the user re-enters a token. Ships with cron.
+- **`releases` daily count** — cross-ref to Releases/ folder or REST fan-out per repo. Lands in a follow-up slice.
 
 ### Added
 - Initial repository scaffold: esbuild config, TypeScript config, Jest setup with obsidian mock shim, GitHub Actions CI (audit + gitleaks + typecheck + test + build), Dependabot config.

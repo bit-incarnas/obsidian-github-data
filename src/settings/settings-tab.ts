@@ -56,7 +56,46 @@ export class GithubDataSettingTab extends PluginSettingTab {
 
 		await this.renderAuthSection(containerEl);
 		this.renderAllowlistSection(containerEl);
+		this.renderActivitySection(containerEl);
 		this.renderScopeHint(containerEl);
+	}
+
+	private renderActivitySection(parent: HTMLElement): void {
+		parent.createEl("h3", { text: "Activity" });
+
+		const desc = parent.createDiv({ cls: "setting-item-description" });
+		desc.setText(
+			"`GitHub Data: Sync activity` pulls your contributionsCollection (commits / PRs / issues / reviews) for the window below, writing one file per active day at `02_AREAS/GitHub/Activity/YYYY-MM/YYYY-MM-DD.md`. Feeds the Telemetry Grid and Heatmap Calendar.",
+		);
+		desc.style.marginBottom = "0.75em";
+
+		new Setting(parent)
+			.setName("Window (days back from today)")
+			.setDesc(
+				"GitHub caps contributionsCollection at 1 year per query (365). Default 30 is enough for a weekly rhythm; bump to 90/180/365 for deeper history.",
+			)
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text.inputEl.min = "1";
+				text.inputEl.max = "365";
+				// Track the most recent valid input; commit once on blur
+				// rather than saving on every keystroke. Stops transient
+				// invalid states (e.g. typing "365" passes through 3, 36)
+				// from triggering N separate saves.
+				let pending = this.plugin.settings.activitySyncDays;
+				text.setValue(String(pending));
+				text.onChange((value) => {
+					const n = Number.parseInt(value, 10);
+					if (Number.isFinite(n) && n >= 1 && n <= 365) {
+						pending = n;
+					}
+				});
+				text.inputEl.addEventListener("blur", async () => {
+					if (pending === this.plugin.settings.activitySyncDays) return;
+					this.plugin.settings.activitySyncDays = pending;
+					await this.plugin.saveSettings();
+				});
+			});
 	}
 
 	private renderAllowlistSection(parent: HTMLElement): void {

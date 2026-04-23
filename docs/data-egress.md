@@ -15,6 +15,8 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 | `GET /repos/{owner}/{repo}/pulls` | `api.github.com` | User runs `GitHub Data: Sync all open pull requests` | Same auth + UA; `state=open&per_page=100`; multi-page | User-initiated. Paginated. |
 | `GET /repos/{owner}/{repo}/releases` | `api.github.com` | User runs `GitHub Data: Sync all releases` | Same auth + UA; `per_page=100`; multi-page | User-initiated. Paginated. |
 | `GET /repos/{owner}/{repo}/dependabot/alerts` | `api.github.com` | User runs `GitHub Data: Sync all open Dependabot alerts` | Same auth + UA; `state=open&per_page=100`; multi-page | User-initiated. Paginated. 404 (alerts disabled on the repo) is tolerated as an empty list rather than a failure. |
+| `POST /graphql` (viewer lookup) | `api.github.com` | User runs `GitHub Data: Sync activity` (first call) | Same auth + UA; body: `{ query: "query { viewer { login } }" }`; no vault content | User-initiated. One-shot per run; can be skipped if the caller passes `login` explicitly. |
+| `POST /graphql` (contributionsCollection) | `api.github.com` | User runs `GitHub Data: Sync activity` | Same auth + UA; body: GraphQL query + variables `{ login, from, to }` (ISO-8601 datetimes); no vault content | User-initiated. Returns commits-by-repo + opened-PR / opened-issue / reviews for the window. Window defaults to 30 days; capped at 365 by the settings UI (GitHub's contributionsCollection limit per query). |
 
 All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
 

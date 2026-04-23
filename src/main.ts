@@ -9,6 +9,7 @@ import { GithubDataSettingTab } from "./settings/settings-tab";
 import { maybeShowDevVaultNotice } from "./settings/dev-vault-notice";
 import { resolveToken } from "./settings/secret-storage";
 import { DEFAULT_SETTINGS, mergeSettings, type GithubDataSettings } from "./settings/types";
+import { syncActivity } from "./sync/activity-writer";
 import { syncRepoDependabotAlerts } from "./sync/dependabot-writer";
 import { syncRepoIssues } from "./sync/issue-writer";
 import { syncRepoPullRequests } from "./sync/pr-writer";
@@ -85,9 +86,54 @@ export default class GithubDataPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "sync-activity",
+			name: "Sync activity",
+			callback: () => {
+				void this.syncActivityFeed();
+			},
+		});
+
 		this.app.workspace.onLayoutReady(() => {
 			void this.onAppReady();
 		});
+	}
+
+	async syncActivityFeed(): Promise<void> {
+		const token = this.getToken();
+		if (!token) {
+			new Notice(
+				"No GitHub token set. Add one in Settings -> GitHub Data.",
+			);
+			return;
+		}
+
+		const windowDays = this.settings.activitySyncDays;
+		new Notice(
+			`GitHub Data: syncing activity (last ${windowDays} day${windowDays === 1 ? "" : "s"})...`,
+		);
+
+		const client = this.createClient(token);
+		const writer = new ObsidianVaultWriter(this.app);
+
+		const result = await syncActivity({ client, writer, windowDays });
+
+		if (!result.ok) {
+			console.warn("[github-data] activity sync failed:", result.reason);
+			new Notice(
+				`GitHub Data: activity sync failed -- ${result.reason ?? "unknown error"}`,
+				8000,
+			);
+			return;
+		}
+
+		const wrote = result.writtenCount ?? 0;
+		const failed = result.failedCount ?? 0;
+		const days = result.totalDays ?? 0;
+		new Notice(
+			`GitHub Data: activity synced. ${wrote} day file(s) written across ${days} active day(s). ${failed} failed.`,
+			6000,
+		);
 	}
 
 	async syncAllDependabotAlerts(): Promise<void> {

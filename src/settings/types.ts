@@ -25,6 +25,13 @@ export interface GithubDataSettings {
 	/** Background sync cadence in minutes. 0 disables background sync. */
 	syncCadenceMinutes: number;
 
+	/**
+	 * How many days back from now to include when syncing activity
+	 * (commits / PRs / issues / reviews). GitHub's contributionsCollection
+	 * caps at 1 year per query; larger windows would need to be split.
+	 */
+	activitySyncDays: number;
+
 	/** Last successful sync per repo (ISO-8601 UTC). Populated by the sync engine. */
 	lastSyncedAt: Record<string, string>;
 }
@@ -37,11 +44,18 @@ export const DEFAULT_SETTINGS: GithubDataSettings = {
 	devVaultGitNoticeShown: false,
 	repoAllowlist: [],
 	syncCadenceMinutes: 15,
+	activitySyncDays: 30,
 	lastSyncedAt: {},
 };
 
 /**
  * Merge loaded settings over defaults. Safe against partial data.
+ *
+ * Coercions are applied for fields where a malformed persisted value
+ * could crash downstream logic -- e.g. `activitySyncDays` ends up as a
+ * variable in a GraphQL query, so a `NaN` or a 10_000 would either
+ * fail the query or (for oversize windows) violate GitHub's
+ * contributionsCollection 1-year cap.
  */
 export function mergeSettings(
 	loaded: Partial<GithubDataSettings> | null | undefined,
@@ -52,5 +66,26 @@ export function mergeSettings(
 		// Ensure nested objects aren't shared references
 		lastSyncedAt: { ...(loaded?.lastSyncedAt ?? {}) },
 		repoAllowlist: [...(loaded?.repoAllowlist ?? [])],
+		activitySyncDays: clampActivitySyncDays(loaded?.activitySyncDays),
 	};
+}
+
+/**
+ * Sanitize `activitySyncDays` from user-edited or corrupted settings
+ * data. Valid range is 1..365 (GitHub's contributionsCollection caps
+ * the query window at 1 year). Anything invalid falls back to the
+ * default (30).
+ */
+function clampActivitySyncDays(raw: unknown): number {
+	const n =
+		typeof raw === "number"
+			? raw
+			: typeof raw === "string"
+				? Number.parseInt(raw, 10)
+				: Number.NaN;
+	if (!Number.isFinite(n)) return DEFAULT_SETTINGS.activitySyncDays;
+	const floored = Math.floor(n);
+	if (floored < 1) return DEFAULT_SETTINGS.activitySyncDays;
+	if (floored > 365) return 365;
+	return floored;
 }
