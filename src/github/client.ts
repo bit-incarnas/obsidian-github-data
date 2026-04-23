@@ -8,6 +8,13 @@
  * Our custom fetch just needs to receive the fully-resolved request and
  * return a Response-like object.
  *
+ * The fetch is wrapped with rate-limit / retry / circuit-breaker policy
+ * via `wrapWithRateLimit` (see fetch-wrapper.ts). State (rate-limit
+ * tracker, circuit breaker, concurrency semaphore) is plugin-lifetime and
+ * must be passed in from the caller so multi-sync runs share a single
+ * budget + circuit state. If omitted, fresh instances are created per
+ * client -- fine for tests + one-shot settings-tab calls.
+ *
  * Why not `hook.wrap("request", ...)` (the original approach)?
  *
  * `hook.wrap` receives options AFTER `endpoint.merge` but BEFORE
@@ -23,20 +30,29 @@
  * the fetchWrapper boundary is the HTTP transport, which is exactly what
  * we need to replace.
  *
- * Design invariants (from 01_DESIGN.md Security Invariants -- HTTP layer):
+ * Design invariants (01_DESIGN.md Security Invariants -- HTTP layer +
+ * Rate-limit discipline):
  * - `@octokit/core` + plugins, not the meta `octokit` package.
  * - Auth via `auth: token` option, so `@octokit/auth-token` injects the
  *   `Authorization` header through Octokit's standard flow.
  * - `status === 0` (Capacitor / native-transport failure) maps to an
  *   explicit throw so Octokit never sees a "0 OK".
  * - HTTP dependency is injectable (`HttpFn`) for integration testability.
+ * - All requests routed through `wrapWithRateLimit`: circuit breaker,
+ *   concurrency cap, rate-limit-aware retry/backoff, 429/403/5xx
+ *   failure-mode handling.
  */
 
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
 import { restEndpointMethods } from "@octokit/plugin-rest-endpoint-methods";
 
+import type { BackoffOptions } from "./backoff";
+import { CircuitBreaker } from "./circuit-breaker";
+import { Semaphore } from "./concurrency";
+import { wrapWithRateLimit } from "./fetch-wrapper";
 import { defaultHttpFn, type HttpFn } from "./http";
+import { RateLimitTracker } from "./rate-limit";
 
 const GithubOctokit = Octokit.plugin(paginateRest, restEndpointMethods);
 
@@ -50,6 +66,27 @@ export interface CreateGithubClientOptions {
 	 * Tests swap in a Node-fetch adapter to hit real GitHub from Node.
 	 */
 	httpFn?: HttpFn;
+	/**
+	 * Shared rate-limit tracker. Plugin-lifetime; created fresh if omitted.
+	 */
+	rateLimit?: RateLimitTracker;
+	/**
+	 * Shared circuit breaker (401-twice trips). Plugin-lifetime; created
+	 * fresh if omitted.
+	 */
+	circuit?: CircuitBreaker;
+	/**
+	 * Shared concurrency semaphore (max 4 in-flight). Plugin-lifetime;
+	 * created fresh if omitted.
+	 */
+	concurrency?: Semaphore;
+	/** Max retry attempts for 429 / 5xx / transport failures. Default 3. */
+	maxRetries?: number;
+	/** Hard cap on any single sleep (ms). Default 3_600_000 (1hr). */
+	maxSleepMs?: number;
+	backoff?: BackoffOptions;
+	/** Injected sleep for tests. */
+	sleep?: (ms: number) => Promise<void>;
 }
 
 export function createGithubClient(
@@ -57,12 +94,27 @@ export function createGithubClient(
 ): GithubClient {
 	const http: HttpFn = options.httpFn ?? defaultHttpFn;
 	const userAgent = options.userAgent ?? "obsidian-github-data";
+	const rateLimit = options.rateLimit ?? new RateLimitTracker();
+	const circuit = options.circuit ?? new CircuitBreaker();
+	const concurrency = options.concurrency ?? new Semaphore();
+
+	const innerFetch = createRequestUrlFetch(http);
+	const fetch = wrapWithRateLimit({
+		inner: innerFetch,
+		rateLimit,
+		circuit,
+		concurrency,
+		maxRetries: options.maxRetries,
+		maxSleepMs: options.maxSleepMs,
+		backoff: options.backoff,
+		sleep: options.sleep,
+	});
 
 	return new GithubOctokit({
 		auth: options.token,
 		userAgent,
 		request: {
-			fetch: createRequestUrlFetch(http),
+			fetch,
 		},
 	});
 }
@@ -72,7 +124,7 @@ export function createGithubClient(
  * provided `HttpFn`. Octokit's fetchWrapper calls this with a fully-
  * resolved URL, fully-composed headers, and a serialized body.
  */
-function createRequestUrlFetch(http: HttpFn): typeof fetch {
+export function createRequestUrlFetch(http: HttpFn): typeof fetch {
 	return (async (
 		input: RequestInfo | URL,
 		init?: RequestInit,

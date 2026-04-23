@@ -1,6 +1,9 @@
 import { Notice, Plugin } from "obsidian";
 
-import { createGithubClient } from "./github/client";
+import { CircuitBreaker } from "./github/circuit-breaker";
+import { createGithubClient, type GithubClient } from "./github/client";
+import { Semaphore } from "./github/concurrency";
+import { RateLimitTracker } from "./github/rate-limit";
 import { parseRepoPath } from "./paths/sanitize";
 import { GithubDataSettingTab } from "./settings/settings-tab";
 import { maybeShowDevVaultNotice } from "./settings/dev-vault-notice";
@@ -15,6 +18,18 @@ import { ObsidianVaultWriter } from "./vault/writer";
 
 export default class GithubDataPlugin extends Plugin {
 	settings: GithubDataSettings = DEFAULT_SETTINGS;
+
+	/**
+	 * Plugin-lifetime HTTP state shared across every sync command. A
+	 * single RateLimitTracker means the budget is global across syncs
+	 * (writers don't silently double-count their concurrency). A single
+	 * CircuitBreaker means 401 twice in any command trips for all later
+	 * commands -- the user acts once and resets once. A single Semaphore
+	 * caps parallel in-flight requests across all writers.
+	 */
+	private readonly rateLimit = new RateLimitTracker();
+	private readonly circuit = new CircuitBreaker();
+	private readonly concurrency = new Semaphore();
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -95,7 +110,7 @@ export default class GithubDataPlugin extends Plugin {
 			`GitHub Data: fetching Dependabot alerts for ${allowlist.length} repo(s)...`,
 		);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		let synced = 0;
@@ -156,7 +171,7 @@ export default class GithubDataPlugin extends Plugin {
 			`GitHub Data: fetching releases for ${allowlist.length} repo(s)...`,
 		);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		let synced = 0;
@@ -211,7 +226,7 @@ export default class GithubDataPlugin extends Plugin {
 			`GitHub Data: fetching open PRs for ${allowlist.length} repo(s)...`,
 		);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		let synced = 0;
@@ -266,7 +281,7 @@ export default class GithubDataPlugin extends Plugin {
 			`GitHub Data: fetching open issues for ${allowlist.length} repo(s)...`,
 		);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		let synced = 0;
@@ -319,7 +334,7 @@ export default class GithubDataPlugin extends Plugin {
 
 		new Notice(`GitHub Data: syncing ${allowlist.length} repo profile(s)...`);
 
-		const client = createGithubClient({ token });
+		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
 
 		let ok = 0;
@@ -358,6 +373,20 @@ export default class GithubDataPlugin extends Plugin {
 
 	onunload(): void {
 		// Registered events/intervals auto-clean via the Plugin base class.
+	}
+
+	/**
+	 * Build a GitHub client backed by the plugin's shared rate-limit
+	 * state. Every sync command funnels through here so 401 tripping,
+	 * backoff budgets, and concurrency caps are consistent.
+	 */
+	private createClient(token: string): GithubClient {
+		return createGithubClient({
+			token,
+			rateLimit: this.rateLimit,
+			circuit: this.circuit,
+			concurrency: this.concurrency,
+		});
 	}
 
 	async loadSettings(): Promise<void> {

@@ -18,7 +18,18 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 
 All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
 
-The **HTTP layer** in `src/github/` is built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via `hook.wrap("request", ...)` wrapping Obsidian's `requestUrl`. It sets `Authorization: Bearer <PAT>` and `User-Agent: obsidian-github-data` on every call.
+The **HTTP layer** in `src/github/` is built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via Octokit's canonical `request.fetch` override wrapping Obsidian's `requestUrl`. It sets `Authorization: token <PAT>` and `User-Agent: obsidian-github-data` on every call.
+
+**Retry behavior** (added in the rate-limit-discipline slice): failed requests may retry with exponential backoff + jitter. Specifically:
+- `401 Unauthorized` retries exactly once (per the design's "fresh connection" policy); a second consecutive 401 trips an in-process circuit breaker that blocks further requests until the user restarts Obsidian (proper reset UX lands with cron).
+- `429 Too Many Requests` sleeps `max(Retry-After, exp-backoff)` then retries.
+- `403` with a rate-limit body or `X-RateLimit-Remaining: 0` sleeps until `X-RateLimit-Reset` then retries.
+- `403` with `x-github-sso: required` trips the circuit immediately (no retry).
+- `5xx` and transport-level failures (status === 0) back off + retry.
+- Default retry budget: **3 attempts per request**, **1-hour cap on any single sleep**.
+- Max **4 in-flight requests** at a time (FIFO-queued).
+
+These retries are confined to the same endpoints listed in the table above -- no new destinations are introduced.
 
 The integration test suite (`npm run test:integration`) can also fire outbound calls when run manually with an explicit `GH_TEST_TOKEN` env var. That env var is never set in CI.
 
