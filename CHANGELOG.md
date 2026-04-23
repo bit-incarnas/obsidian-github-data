@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (activity aggregator)
+- **`src/github/graphql.ts`** — typed wrappers over `client.graphql()` for the two GraphQL queries we need: `fetchViewerLogin` (one-shot `{ viewer { login } }`) and `fetchContributionsCollection(login, from, to)` which returns commits-by-repo + opened PRs (with `merged` / `mergedAt` sub-shape) + opened issues (with `closedAt`) + reviews given. First use of GraphQL in the plugin; wires through Octokit's built-in `client.graphql()` so it benefits from the same auth + HTTP transport.
+- **`src/sync/activity-writer.ts`** — `syncActivity(options)` fetches the user's contributionsCollection for the configured window, aggregates into per-day rollups via the pure `aggregateActivityByDay(data)` function, and writes one file per active day at `02_AREAS/GitHub/Activity/YYYY-MM/YYYY-MM-DD.md`.
+- Aggregation rules: `commits_total` summed across repos on each UTC day; `prs_opened` / `issues_opened` / `reviews_given` counted on their `occurredAt` date; `prs_merged` derived from each PR's `mergedAt` (counted on merge date, not open date); `issues_closed` from each issue's `closedAt`. Per-repo breakdown captures commits / PRs-opened / issues-opened / reviews-given per repo.
+- Frontmatter schema (`type: github_activity_day`, `schema_version: 1`): `date`, `commits_total`, `prs_opened`, `prs_merged`, `issues_opened`, `issues_closed`, `reviews_given`, `releases` (always 0 in this slice -- cross-ref to Releases/ or REST fan-out lands in a follow-up), `last_synced`, `tags: ["github", "activity"]`.
+- Body: summary table, per-repo breakdown table (commits-desc ordered), `## :: YOUR NOTES` section with a `{% persist:user "notes" %}` block that survives re-sync via `extractPersistBlocks` + `mergePersistBlocks`.
+- **`src/settings/types.ts`** — new `activitySyncDays: number` setting (default 30, max 365 to respect GitHub's contributionsCollection 1-year cap per query).
+- **`src/settings/settings-tab.ts`** — new "Activity" section with a number input for the window; saves on change.
+- **`src/main.ts`** — new command `GitHub Data: Sync activity`. Total commands: 7.
+- Activity is user-centric, NOT filtered by repo allowlist -- the point is to capture the full contribution picture (the allowlist governs file-per-entity writes, which are repo-centric).
+- **22 new tests across 2 suites** in `graphql.test.ts` (6) and `activity-writer.test.ts` (16) covering aggregation correctness, frontmatter emission, persist-block preservation on re-sync, viewer-login auto-resolution, GraphQL error paths, and window derivation. Total: **257 tests across 15 suites**.
+
+### Data egress (activity aggregator)
+- New egress: `POST /graphql` to `api.github.com`. Body = GraphQL query + variables (login, from, to ISO-8601 datetimes); never contains vault data. One request per `Sync activity` invocation; plus a preliminary `viewer { login }` query the first time per session (cached in the result for subsequent runs if the caller passes `login` back in).
+- All existing call properties still hold: user-initiated, no telemetry, no third-party egress, PAT-only-in-Authorization-header.
+
 ### Added
 - Initial repository scaffold: esbuild config, TypeScript config, Jest setup with obsidian mock shim, GitHub Actions CI (audit + gitleaks + typecheck + test + build), Dependabot config.
 - `docs/data-egress.md` and `docs/data-schema.md` disclosure artifacts per the plugin program's data-egress policy.

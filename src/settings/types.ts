@@ -25,6 +25,13 @@ export interface GithubDataSettings {
 	/** Background sync cadence in minutes. 0 disables background sync. */
 	syncCadenceMinutes: number;
 
+	/**
+	 * How many days back from now to include when syncing activity
+	 * (commits / PRs / issues / reviews). GitHub's contributionsCollection
+	 * caps at 1 year per query; larger windows would need to be split.
+	 */
+	activitySyncDays: number;
+
 	/** Last successful sync per repo (ISO-8601 UTC). Populated by the sync engine. */
 	lastSyncedAt: Record<string, string>;
 }
@@ -37,6 +44,7 @@ export const DEFAULT_SETTINGS: GithubDataSettings = {
 	devVaultGitNoticeShown: false,
 	repoAllowlist: [],
 	syncCadenceMinutes: 15,
+	activitySyncDays: 30,
 	lastSyncedAt: {},
 };
 
