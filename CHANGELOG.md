@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (rate-limit discipline)
+- **`src/github/rate-limit.ts`** — `RateLimitTracker` records `X-RateLimit-{Limit, Remaining, Reset, Used, Resource}` from every response. Plugin-lifetime instance (constructed once in `main.ts`, shared across every sync command) so the budget is global. `isLow()` (default threshold: 500 per security-review H5), `msUntilReset()`, `remainingRatio()` for throttle decisions.
+- **`src/github/backoff.ts`** — `computeBackoff(attempt, opts)` returns `base * 2^attempt + jitter`, capped at 1hr (failure-mode table). Jitter prevents multi-device synchronized retry storms. `sleep(ms)` helper. Random + sleep injected for tests.
+- **`src/github/circuit-breaker.ts`** — `CircuitBreaker` + `CircuitOpenError`. Opens after 2 consecutive 401s (design threshold); opens immediately on 403-with-`x-github-sso: required`. Once open, further requests throw `CircuitOpenError` *without* firing inner; preserves all synced vault data (the design's explicit preservation requirement on 401 twice). `recordSuccess` clears the counter on any non-auth-failing response. Reset UX lands with the cron slice.
+- **`src/github/concurrency.ts`** — FIFO `Semaphore` caps in-flight requests at 4 (failure-mode table). `run(fn)` acquires/releases via try/finally so slots never leak on throw.
+- **`src/github/fetch-wrapper.ts`** — `wrapWithRateLimit` composes the above into a `typeof fetch` decorator that sits between Octokit and the transport layer. Retry logic per the failure-mode table: 401 once → retry; 401 twice → trip circuit + propagate; 403-SSO → trip circuit; 403-rate-limit → sleep until `X-RateLimit-Reset`; 429 → sleep `max(Retry-After, exp-backoff)`; 5xx → exp-backoff + jitter; `status === 0` / TypeError → exp-backoff + retry. Success (2xx/3xx) clears the 401 counter.
+- **`src/main.ts`** — plugin now holds `rateLimit`, `circuit`, `concurrency` as plugin-lifetime fields; all 5 sync commands funnel through `createClient(token)` so a 401 in one command trips for all subsequent commands (user acts once, resets once). Settings-tab's Test-Connection still uses isolated state so re-testing after a token swap always fires.
+- Distinguishing 403 rate-limit (`X-RateLimit-Remaining: 0` or body mentioning "rate limit") from 403 auth (propagated, no retry).
+- `Retry-After` parsing handles both integer seconds and HTTP-date formats.
+- Bundle growth: 141 KB → 146 KB (~5 KB for the wrapper + state classes; unchanged Octokit surface).
+- **82 new tests across 5 suites** in `rate-limit.test.ts`, `backoff.test.ts`, `circuit-breaker.test.ts`, `concurrency.test.ts`, `fetch-wrapper.test.ts`. `client.test.ts` updated for the retry behavior (401 now fires twice before propagating; status === 0 exhausts retries). Total: **317 tests across 18 suites**.
+
+### Data egress
+- No new endpoints. Observable change: failed requests may now retry with exponential backoff + jitter (max 3 retries by default). 429 / 5xx / network failures no longer propagate on the first attempt -- they back off then retry, capped at 1hr per sleep and 3 retries per request. 401 retries exactly once before tripping the circuit. Circuit-open state blocks further requests client-side; no requests are issued until the user restarts Obsidian (proper reset UX ships with the cron slice).
+
+### Deferred
+- **ETag conditional requests + 304 handling** — `If-None-Match` cache + 304 "no-change" signaling has consumer-side implications across all 5 writers (skip-write-on-304). Lands alongside cron, where the cheap-poll pattern is the point.
+- **Initial-sync budget** (< 500 req in first 10 min) — requires persistent "first sync" timestamp state. Lands alongside cron.
+- **404-archive / 410-delete semantics** — touches writers + user-confirmation dialog for 410. Separate retention-policy slice.
+- **Multi-device soft-mutex** (H6) — separate candidate; uses `last_synced` comparison across devices.
+- **CircuitBreaker reset UX** — Settings-tab action to reset after the user re-enters a token. Ships with cron.
+
 ### Added
 - Initial repository scaffold: esbuild config, TypeScript config, Jest setup with obsidian mock shim, GitHub Actions CI (audit + gitleaks + typecheck + test + build), Dependabot config.
 - `docs/data-egress.md` and `docs/data-schema.md` disclosure artifacts per the plugin program's data-egress policy.
