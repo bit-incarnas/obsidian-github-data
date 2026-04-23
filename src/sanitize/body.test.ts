@@ -4,6 +4,8 @@ import {
 	neutralizeTemplaterMarkers,
 	neutralizeWikilinkDotDot,
 	rewriteImgTagsToMarkdown,
+	sanitizeForUserSafety,
+	sanitizeForVaultIntegrity,
 	sanitizeGithubMarkdown,
 	stripDangerousTags,
 	stripDangerousUrlSchemes,
@@ -286,5 +288,141 @@ describe("sanitizeGithubMarkdown (composite)", () => {
 	test("preserves wikilinks without ..", () => {
 		const input = "See [[Some Page|alt]]";
 		expect(sanitizeGithubMarkdown(input)).toBe(input);
+	});
+
+	test("default-args call is byte-identical to explicit safety-on call", () => {
+		// Guard against accidental reordering regressions between
+		// sanitizeGithubMarkdown() and its split halves.
+		const fixtures = [
+			"# Hello\n\n**bold** and _italic_ with [a](https://example.com)",
+			"plain text",
+			"<script>alert(1)</script>",
+			"<% tp.file.title %>",
+			"`= this.count`",
+			"[[../escape]]",
+			'{% persist:user "x" %}hostile{% endpersist %}',
+			[
+				"# combined",
+				'<img src="x" onerror="alert(1)">',
+				"<% tp.file.exec('x') %>",
+				"`$= dv.current()`",
+				"[[../../etc]]",
+				'{% persist:template "y" %}',
+			].join("\n"),
+		];
+		for (const f of fixtures) {
+			expect(sanitizeGithubMarkdown(f)).toBe(
+				sanitizeGithubMarkdown(f, { disableUserSafetySanitation: false }),
+			);
+		}
+	});
+});
+
+describe("sanitizeForUserSafety", () => {
+	test("strips <script>, event handlers, javascript: URLs", () => {
+		const input = [
+			'<script>alert(1)</script>',
+			'<a href="javascript:alert(1)" onclick="x">z</a>',
+		].join("\n");
+		const out = sanitizeForUserSafety(input);
+		expect(out.toLowerCase()).not.toContain("<script");
+		expect(out.toLowerCase()).not.toContain("onclick");
+		expect(out.toLowerCase()).not.toContain("javascript:");
+	});
+
+	test("neutralizes Templater and Dataview inline queries", () => {
+		const input = "<% tp.file.exec() %> and `= this.count`";
+		const out = sanitizeForUserSafety(input);
+		expect(out).toContain("\\<%");
+		expect(out).toContain("\\`=");
+	});
+
+	test("rewrites <img> to markdown form", () => {
+		expect(sanitizeForUserSafety('<img src="x.png" alt="a">')).toBe(
+			"![a](x.png)",
+		);
+	});
+
+	test("does NOT touch wikilink `..` or persist markers", () => {
+		const input = '[[../escape]] and {% persist:user "x" %}';
+		expect(sanitizeForUserSafety(input)).toBe(input);
+	});
+
+	test("empty input returns empty", () => {
+		expect(sanitizeForUserSafety("")).toBe("");
+	});
+});
+
+describe("sanitizeForVaultIntegrity", () => {
+	test("rewrites wikilink `..` to `.`", () => {
+		expect(sanitizeForVaultIntegrity("[[../secret]]")).toBe(
+			"[[./secret]]",
+		);
+	});
+
+	test("escapes persist-block markers", () => {
+		const out = sanitizeForVaultIntegrity(
+			'{% persist:user "x" %}hostile{% endpersist %}',
+		);
+		expect(out).not.toMatch(/\{%\s*persist:user\b/);
+		expect(out).toContain("{\\% persist:user");
+	});
+
+	test("does NOT touch script / Templater / event handlers", () => {
+		const input =
+			'<script>x</script><% tp %>`= this.x`<a onclick="y">z</a>';
+		expect(sanitizeForVaultIntegrity(input)).toBe(input);
+	});
+
+	test("empty input returns empty", () => {
+		expect(sanitizeForVaultIntegrity("")).toBe("");
+	});
+});
+
+describe("sanitizeGithubMarkdown with disableUserSafetySanitation", () => {
+	test("toggle on bypasses script / Templater / Dataview / event handlers", () => {
+		const hostile = [
+			'<script>alert(1)</script>',
+			"<% tp.file.exec('x') %>",
+			"`= this.count`",
+			'<a href="javascript:alert(1)" onerror="x">z</a>',
+		].join("\n");
+		const out = sanitizeGithubMarkdown(hostile, {
+			disableUserSafetySanitation: true,
+		});
+		// User-safety passes skipped: hostile markup survives.
+		expect(out.toLowerCase()).toContain("<script");
+		expect(out).toContain("<% tp.file.exec('x') %>");
+		expect(out).toContain("`= this.count`");
+		expect(out.toLowerCase()).toContain("onerror");
+	});
+
+	test("toggle on still enforces vault-integrity passes", () => {
+		const hostile =
+			'[[../../../Private/Secret]] and {% persist:user "x" %}inject{% endpersist %}';
+		const out = sanitizeGithubMarkdown(hostile, {
+			disableUserSafetySanitation: true,
+		});
+		// Vault-integrity always runs.
+		expect(out).not.toContain("[[../");
+		expect(out).toContain("[[./");
+		expect(out).not.toMatch(/\{%\s*persist:user\b/);
+		expect(out).toContain("{\\% persist:user");
+	});
+
+	test("toggle off (explicit) matches default behavior", () => {
+		const input =
+			'<script>x</script> [[../y]] {% persist:user "z" %}body{% endpersist %}';
+		expect(
+			sanitizeGithubMarkdown(input, {
+				disableUserSafetySanitation: false,
+			}),
+		).toBe(sanitizeGithubMarkdown(input));
+	});
+
+	test("toggle on returns empty for empty input", () => {
+		expect(
+			sanitizeGithubMarkdown("", { disableUserSafetySanitation: true }),
+		).toBe("");
 	});
 });

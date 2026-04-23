@@ -11,17 +11,26 @@
  * triage: middle-ground (this module). Block the execution vectors;
  * preserve everything readable.
  *
- * Blocked / neutralized:
+ * Passes split into two categories:
+ *
+ * User-safety (toggleable via `disableUserSafetySanitation`):
  * - <script>, <iframe>, <object>, <embed>, <link>, <style> tags stripped
  * - Event-handler attributes (on*) stripped
  * - `javascript:` and `data:text/html` URL schemes stripped
+ * - <img> tags rewritten to markdown image form (stricter renderer)
  * - Templater markers `<% ... %>` and `<%* ... %>` literal-escaped
  *   (critical: Templater auto-trigger can RCE from synced bodies)
  * - Dataview inline queries `` `= ... ` `` and `` `$= ... ` `` escaped
- * - Wikilinks containing `..` rewritten to plain text
- * - <img> tags rewritten to markdown image form (stricter renderer)
+ *
+ * Vault-integrity (ALWAYS runs, not toggleable):
+ * - Wikilinks containing `..` rewritten to prevent path-escape
  * - Persist-block markers `{% persist:* ... %}` escaped so hostile
  *   content cannot inject a preserved region
+ *
+ * The user-safety passes defend the *operator* from RCE / exfil via
+ * other installed plugins. The vault-integrity passes defend the
+ * *vault graph* from resolving unexpected paths or corrupting the
+ * persist-block extractor. Only the first set is user-disableable.
  *
  * Preserved:
  * - Standard markdown (headings, lists, emphasis, code fences)
@@ -29,8 +38,21 @@
  * - Comment bot output (bot identity verified separately)
  */
 
-/** All passes in order; used by the public entry point + tests. */
-export function sanitizeGithubMarkdown(input: string): string {
+export interface SanitizeOptions {
+	/**
+	 * Bypass the user-safety passes. Vault-integrity passes still run.
+	 * Default false. When true, the caller accepts that Templater,
+	 * Dataview, and raw HTML (script / iframe / event handlers) from
+	 * GitHub body content will be written to disk verbatim.
+	 */
+	disableUserSafetySanitation?: boolean;
+}
+
+/**
+ * User-safety passes, in order. Blocks the RCE / exfil surface that
+ * arises when other installed plugins auto-process synced markdown.
+ */
+export function sanitizeForUserSafety(input: string): string {
 	if (input.length === 0) return input;
 
 	let out = input;
@@ -40,9 +62,34 @@ export function sanitizeGithubMarkdown(input: string): string {
 	out = stripDangerousUrlSchemes(out);
 	out = neutralizeTemplaterMarkers(out);
 	out = neutralizeDataviewInlineQueries(out);
+	return out;
+}
+
+/**
+ * Vault-integrity passes, in order. Runs unconditionally; protects the
+ * vault graph from path-escape and the persist-block extractor from
+ * hostile injection, independent of what the operator chooses to
+ * tolerate from upstream.
+ */
+export function sanitizeForVaultIntegrity(input: string): string {
+	if (input.length === 0) return input;
+
+	let out = input;
 	out = neutralizeWikilinkDotDot(out);
 	out = escapePersistMarkers(out);
 	return out;
+}
+
+/** Public entry point used by every writer. */
+export function sanitizeGithubMarkdown(
+	input: string,
+	opts: SanitizeOptions = {},
+): string {
+	if (input.length === 0) return input;
+	const afterSafety = opts.disableUserSafetySanitation
+		? input
+		: sanitizeForUserSafety(input);
+	return sanitizeForVaultIntegrity(afterSafety);
 }
 
 /**

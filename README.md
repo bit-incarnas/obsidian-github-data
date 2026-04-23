@@ -121,6 +121,30 @@ Each codeblock type has sensible default columns; override via `columns: [number
 | Test connection | Validates the token against `GET /user` |
 | Clear token | Removes token from both SecretStorage and `data.json` |
 | Repository allowlist | `owner/repo` strings the plugin is allowed to sync; codeblock queries (future) will also enforce this |
+| Activity window (days) | How many days back from today to pull when running `Sync activity` (1-365) |
+| Disable body sanitation | Advanced / power-user escape hatch. See below |
+
+### Advanced
+
+**Disable body sanitation** is an escape hatch for power users who sync only repos they fully control and want to preserve Templater / Dataview / raw-HTML content verbatim. Default is **off** -- leave it off unless you know why you want it on.
+
+When the toggle is on, the sanitizer's **user-safety** passes are bypassed on every body write (issues, PRs, releases, repo READMEs, Dependabot advisory descriptions). Specifically, these are NO LONGER neutralized:
+
+- `<script>`, `<iframe>`, `<object>`, `<embed>`, `<link>`, `<style>`, `<meta>`, `<base>` tags
+- Event-handler attributes (`onclick`, `onerror`, etc.)
+- `javascript:` and `data:text/html` URL schemes
+- `<img>` rewriting to safer markdown form
+- Templater markers `<% ... %>` and `<%* ... %>`
+- Dataview inline queries `` `= ... ` `` and `` `$= ... ` ``
+
+A crafted issue body on any allowlisted repo can now execute code in your vault via Templater auto-run, run arbitrary Dataview / DataviewJS queries, or ship arbitrary HTML / JavaScript.
+
+**Vault-integrity** passes always run regardless of this setting:
+
+- Wikilinks containing `..` are rewritten so synced content can't link out of the vault root.
+- `{% persist:user ... %}` / `{% persist:template ... %}` markers in GitHub-sourced content are escaped so hostile upstream content can't inject a persist block that survives re-sync.
+
+The plugin logs a one-time `console.warn` on load whenever the toggle is on; the settings tab renders a red warning banner next to the toggle. If you flip this on and forget it's on months later, that's on you.
 
 ## Development
 

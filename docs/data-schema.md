@@ -28,7 +28,10 @@ Fields written to `data.json`:
 | `useSecretStorage` | boolean | Whether PAT is in SecretStorage. |
 | `secretTokenName` | string | SecretStorage key name when migrated. |
 | `syncCadenceMinutes` | number | Background sync interval (default 15). |
-| `lastSyncedAt` | ISO-8601 | Last successful sync timestamp per repo. |
+| `activitySyncDays` | number | Days back from today pulled by `Sync activity` (1-365, default 30). |
+| `lastSyncedAt` | object | Map of `owner/repo` -> ISO-8601 timestamp of last successful sync. |
+| `devVaultGitNoticeShown` | boolean | One-shot flag: dev-vault `.git` warning already displayed. |
+| `disableBodySanitation` | boolean | Advanced toggle. When true, user-safety sanitation is bypassed on synced body content; vault-integrity sanitation (wikilink `..` rewrite, persist-block marker escape) always runs. Default false. See README for full trade-off copy. |
 | `logLevel` | string | `debug` / `info` / `warning` / `error`. |
 
 > **If SecretStorage is unavailable** and your vault is under version control, add `.obsidian/plugins/github-data/data.json` to `.gitignore` -- the plugin surfaces a one-time notice at load-time to remind you.

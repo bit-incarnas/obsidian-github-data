@@ -48,6 +48,8 @@ export interface RepoIssueSyncOptions {
 	allowlist: string[];
 	vaultRoot?: string;
 	now?: () => Date;
+	/** Bypass user-safety body sanitation. Vault-integrity passes still run. */
+	disableBodySanitation?: boolean;
 }
 
 export interface RepoIssueSyncResult {
@@ -71,6 +73,7 @@ export async function syncRepoIssues(
 	const { client, writer, allowlist } = options;
 	const vaultRoot = options.vaultRoot ?? DEFAULT_ROOT;
 	const now = options.now ?? (() => new Date());
+	const disableBodySanitation = options.disableBodySanitation ?? false;
 
 	const validated = validateRepoName(owner, repo);
 	if (!validated.valid) {
@@ -145,6 +148,7 @@ export async function syncRepoIssues(
 				repo,
 				fileResult.path,
 				writer,
+				disableBodySanitation,
 			);
 			await writer.writeFile(fileResult.path, body);
 			await writer.updateFrontmatter(fileResult.path, (fm) => {
@@ -165,8 +169,9 @@ async function composeIssueFile(
 	repo: string,
 	filePath: string,
 	writer: VaultWriter,
+	disableBodySanitation: boolean,
 ): Promise<string> {
-	const fresh = buildIssueBody(issue, owner, repo);
+	const fresh = buildIssueBody(issue, owner, repo, disableBodySanitation);
 
 	// Preserve user persist blocks on re-sync.
 	if (await writer.pathExists(filePath)) {
@@ -187,6 +192,7 @@ function buildIssueBody(
 	issue: IssueItem,
 	owner: string,
 	repo: string,
+	disableBodySanitation: boolean,
 ): string {
 	const lines: string[] = [];
 	const titleSafe = issue.title ?? "(untitled)";
@@ -221,7 +227,11 @@ function buildIssueBody(
 	lines.push("## :: BODY");
 	lines.push("");
 	if (issue.body && issue.body.length > 0) {
-		lines.push(sanitizeGithubMarkdown(issue.body));
+		lines.push(
+			sanitizeGithubMarkdown(issue.body, {
+				disableUserSafetySanitation: disableBodySanitation,
+			}),
+		);
 	} else {
 		lines.push("_(no description)_");
 	}

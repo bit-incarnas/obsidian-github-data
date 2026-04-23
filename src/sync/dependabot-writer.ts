@@ -47,6 +47,8 @@ export interface RepoDependabotSyncOptions {
 	allowlist: string[];
 	vaultRoot?: string;
 	now?: () => Date;
+	/** Bypass user-safety body sanitation. Vault-integrity passes still run. */
+	disableBodySanitation?: boolean;
 }
 
 export interface RepoDependabotSyncResult {
@@ -71,6 +73,7 @@ export async function syncRepoDependabotAlerts(
 	const { client, writer, allowlist } = options;
 	const vaultRoot = options.vaultRoot ?? DEFAULT_ROOT;
 	const now = options.now ?? (() => new Date());
+	const disableBodySanitation = options.disableBodySanitation ?? false;
 
 	const validated = validateRepoName(owner, repo);
 	if (!validated.valid) {
@@ -155,6 +158,7 @@ export async function syncRepoDependabotAlerts(
 				repo,
 				fileResult.path,
 				writer,
+				disableBodySanitation,
 			);
 			await writer.writeFile(fileResult.path, body);
 			await writer.updateFrontmatter(fileResult.path, (fm) => {
@@ -185,8 +189,9 @@ async function composeAlertFile(
 	repo: string,
 	filePath: string,
 	writer: VaultWriter,
+	disableBodySanitation: boolean,
 ): Promise<string> {
-	const fresh = buildAlertBody(alert, owner, repo);
+	const fresh = buildAlertBody(alert, owner, repo, disableBodySanitation);
 	if (await writer.pathExists(filePath)) {
 		try {
 			const existing = await writer.readFile(filePath);
@@ -205,6 +210,7 @@ function buildAlertBody(
 	alert: AlertItem,
 	owner: string,
 	repo: string,
+	disableBodySanitation: boolean,
 ): string {
 	const lines: string[] = [];
 	const pkg = alert.dependency?.package?.name ?? "unknown";
@@ -246,7 +252,11 @@ function buildAlertBody(
 	if (description.length > 0) {
 		lines.push("## :: ADVISORY DESCRIPTION");
 		lines.push("");
-		lines.push(sanitizeGithubMarkdown(description));
+		lines.push(
+			sanitizeGithubMarkdown(description, {
+				disableUserSafetySanitation: disableBodySanitation,
+			}),
+		);
 		lines.push("");
 	}
 

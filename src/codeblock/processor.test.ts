@@ -19,6 +19,7 @@ function makeSettings(
 		syncCadenceMinutes: 0,
 		activitySyncDays: 30,
 		lastSyncedAt: {},
+		disableBodySanitation: false,
 	};
 }
 

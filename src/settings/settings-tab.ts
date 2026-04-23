@@ -57,7 +57,48 @@ export class GithubDataSettingTab extends PluginSettingTab {
 		await this.renderAuthSection(containerEl);
 		this.renderAllowlistSection(containerEl);
 		this.renderActivitySection(containerEl);
+		this.renderAdvancedSection(containerEl);
 		this.renderScopeHint(containerEl);
+	}
+
+	private renderAdvancedSection(parent: HTMLElement): void {
+		parent.createEl("h3", { text: "Advanced" });
+
+		const intro = parent.createDiv({ cls: "setting-item-description" });
+		intro.setText(
+			"Escape hatches for power users. Defaults are safe; flip these only if you know exactly why.",
+		);
+		intro.style.marginBottom = "0.75em";
+
+		new Setting(parent)
+			.setName("Disable body sanitation")
+			.setDesc(
+				"Bypass the content sanitizer that neutralizes Templater markers, Dataview inline queries, <script>/<iframe>/<object> tags, event-handler attributes, <img> tags, and javascript:/data:text/html URLs in every issue body, PR description, release note, repo README, and Dependabot advisory synced from GitHub. Wikilink path-escape protection and persist-block marker escaping remain active regardless of this setting.",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.disableBodySanitation)
+					.onChange(async (value) => {
+						this.plugin.settings.disableBodySanitation = value;
+						await this.plugin.saveSettings();
+						await this.display();
+					});
+			});
+
+		if (this.plugin.settings.disableBodySanitation) {
+			const warn = parent.createDiv({
+				cls: "setting-item-description",
+			});
+			warn.style.color = "var(--text-error, #ef4444)";
+			warn.style.border = "1px solid var(--text-error, #ef4444)";
+			warn.style.borderRadius = "4px";
+			warn.style.padding = "0.5em 0.75em";
+			warn.style.marginTop = "0.5em";
+			warn.style.marginBottom = "0.75em";
+			warn.setText(
+				"WARNING: body sanitation is disabled. Every GitHub body synced from this moment forward is written to the vault verbatim, which means a crafted issue body, PR description, release note, README, or Dependabot advisory can execute Templater templates, run Dataview / DataviewJS queries, and ship arbitrary HTML / JavaScript (via <script>, <iframe>, event handlers, or javascript: URLs). Enable only when every allowlisted repo is yours or otherwise fully trusted. Vault-integrity protections (wikilink `..` rewrite, persist-block marker escape) remain active.",
+			);
+		}
 	}
 
 	private renderActivitySection(parent: HTMLElement): void {
