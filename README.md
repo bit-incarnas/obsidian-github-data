@@ -146,6 +146,22 @@ A crafted issue body on any allowlisted repo can now execute code in your vault 
 
 The plugin logs a one-time `console.warn` on load whenever the toggle is on; the settings tab renders a red warning banner next to the toggle. If you flip this on and forget it's on months later, that's on you.
 
+## Sync progress view
+
+Opens a read-only dashboard in the right sidebar showing per-repo sync status. Zero network calls -- the view reads `data.json` + the vault's markdown file list.
+
+Two ways to open:
+- **Ribbon icon:** the refresh-cw icon in the left ribbon.
+- **Command palette:** `GitHub Data: Open sync progress`.
+
+What it shows:
+- Per-repo table: **Last synced** (relative -- `2h ago`, `never`), entity counts for **Issues / PRs / Releases / Dependabot**, and a **Status** column that surfaces any recorded sync failure with a kind badge (`http-4xx`, `http-5xx`, `network`, `circuit-open`, `unknown`).
+- **Rate-limit snapshot:** current remaining / limit from the most recent API response.
+- **"Auth circuit open" banner + "Reset circuit" button** when the shared auth breaker has tripped (two consecutive 401s, or a 403 with `x-github-sso: required`). Reset clears the breaker so the next sync attempt fires normally.
+- **"Body sanitation disabled" banner** when the Advanced toggle is on.
+
+The view auto-refreshes when markdown files land in or leave the synced tree (`02_AREAS/GitHub/Repos/`) -- so running a sync command updates the counts live.
+
 ## Development
 
 Requires Node 22+ and npm 10+.

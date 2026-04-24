@@ -1,15 +1,25 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 
 import { registerCodeblockProcessors } from "./codeblock/processor";
-import { CircuitBreaker } from "./github/circuit-breaker";
+import { CircuitBreaker, CircuitOpenError } from "./github/circuit-breaker";
 import { createGithubClient, type GithubClient } from "./github/client";
 import { Semaphore } from "./github/concurrency";
 import { RateLimitTracker } from "./github/rate-limit";
 import { parseRepoPath } from "./paths/sanitize";
+import { canonicalizeRepoEntry } from "./settings/allowlist";
 import { GithubDataSettingTab } from "./settings/settings-tab";
 import { maybeShowDevVaultNotice } from "./settings/dev-vault-notice";
 import { resolveToken } from "./settings/secret-storage";
-import { DEFAULT_SETTINGS, mergeSettings, type GithubDataSettings } from "./settings/types";
+import {
+	DEFAULT_SETTINGS,
+	mergeSettings,
+	type GithubDataSettings,
+	type SyncErrorKind,
+} from "./settings/types";
+import {
+	SyncProgressView,
+	VIEW_TYPE_SYNC_PROGRESS,
+} from "./ui/sync-progress-view";
 import { syncActivity } from "./sync/activity-writer";
 import { syncRepoDependabotAlerts } from "./sync/dependabot-writer";
 import { syncRepoIssues } from "./sync/issue-writer";
@@ -17,6 +27,54 @@ import { syncRepoPullRequests } from "./sync/pr-writer";
 import { syncRepoReleases } from "./sync/release-writer";
 import { syncRepoProfile } from "./sync/repo-profile-writer";
 import { ObsidianVaultWriter } from "./vault/writer";
+
+/**
+ * Classify an arbitrary sync failure into (message, kind) for the view.
+ * Messages are truncated so a runaway GitHub payload can't bloat data.json.
+ */
+function classifySyncError(reason: unknown): {
+	message: string;
+	kind: SyncErrorKind;
+} {
+	const message = describeSyncError(reason);
+	const kind = kindOfSyncError(reason);
+	return { message, kind };
+}
+
+const MAX_ERROR_MESSAGE_LENGTH = 240;
+
+function describeSyncError(reason: unknown): string {
+	let raw: string;
+	if (reason == null) raw = "unknown error";
+	else if (typeof reason === "string") raw = reason;
+	else if (reason instanceof Error) raw = reason.message || reason.name;
+	else raw = String(reason);
+	if (raw.length <= MAX_ERROR_MESSAGE_LENGTH) return raw;
+	return `${raw.slice(0, MAX_ERROR_MESSAGE_LENGTH - 1)}…`;
+}
+
+function kindOfSyncError(reason: unknown): SyncErrorKind {
+	if (reason instanceof CircuitOpenError) return "circuit-open";
+	const status = extractErrorStatus(reason);
+	if (typeof status === "number") {
+		if (status >= 400 && status < 500) return "http-4xx";
+		if (status >= 500 && status < 600) return "http-5xx";
+	}
+	if (reason instanceof TypeError) return "network";
+	if (
+		typeof reason === "string" &&
+		/network|fetch failed|socket|ECONN|ENOTFOUND/i.test(reason)
+	) {
+		return "network";
+	}
+	return "unknown";
+}
+
+function extractErrorStatus(reason: unknown): number | undefined {
+	if (!reason || typeof reason !== "object") return undefined;
+	const status = (reason as { status?: unknown }).status;
+	return typeof status === "number" ? status : undefined;
+}
 
 export default class GithubDataPlugin extends Plugin {
 	settings: GithubDataSettings = DEFAULT_SETTINGS;
@@ -29,8 +87,8 @@ export default class GithubDataPlugin extends Plugin {
 	 * commands -- the user acts once and resets once. A single Semaphore
 	 * caps parallel in-flight requests across all writers.
 	 */
-	private readonly rateLimit = new RateLimitTracker();
-	private readonly circuit = new CircuitBreaker();
+	readonly rateLimit = new RateLimitTracker();
+	readonly circuit = new CircuitBreaker();
 	private readonly concurrency = new Semaphore();
 
 	async onload(): Promise<void> {
@@ -109,9 +167,58 @@ export default class GithubDataPlugin extends Plugin {
 			getSettings: () => this.settings,
 		});
 
+		// Sync Progress view: read-only dashboard over plugin settings +
+		// vault markdown files. Zero network I/O on open (data-egress
+		// policy compliance).
+		this.registerView(
+			VIEW_TYPE_SYNC_PROGRESS,
+			(leaf) => new SyncProgressView(leaf, this),
+		);
+		this.addRibbonIcon("refresh-cw", "GitHub Data: sync progress", () => {
+			void this.openSyncProgress();
+		});
+		this.addCommand({
+			id: "open-sync-progress",
+			name: "Open sync progress",
+			callback: () => {
+				void this.openSyncProgress();
+			},
+		});
+
 		this.app.workspace.onLayoutReady(() => {
 			void this.onAppReady();
 		});
+	}
+
+	/**
+	 * Reveal the Sync Progress view: focus an existing leaf of the
+	 * right type, or open one in the right sidebar.
+	 */
+	async openSyncProgress(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(
+			VIEW_TYPE_SYNC_PROGRESS,
+		);
+		if (existing.length > 0) {
+			this.app.workspace.revealLeaf(existing[0] as WorkspaceLeaf);
+			return;
+		}
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (!leaf) return;
+		await leaf.setViewState({
+			type: VIEW_TYPE_SYNC_PROGRESS,
+			active: true,
+		});
+		this.app.workspace.revealLeaf(leaf as WorkspaceLeaf);
+	}
+
+	/**
+	 * Close the auth circuit and refresh any open progress view. Called
+	 * by the Reset button in the Sync Progress view; the state lives on
+	 * plugin lifetime so resetting from anywhere clears subsequent
+	 * request blocks.
+	 */
+	async resetCircuit(): Promise<void> {
+		this.circuit.reset();
 	}
 
 	async syncActivityFeed(): Promise<void> {
@@ -208,6 +315,7 @@ export default class GithubDataPlugin extends Plugin {
 				);
 				failed++;
 			}
+			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
 		const skippedNote = skipped > 0 ? `, ${skipped} had alerts disabled` : "";
@@ -265,6 +373,7 @@ export default class GithubDataPlugin extends Plugin {
 				);
 				failed++;
 			}
+			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
 		new Notice(
@@ -325,6 +434,7 @@ export default class GithubDataPlugin extends Plugin {
 				);
 				failed++;
 			}
+			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
 		new Notice(
@@ -381,6 +491,7 @@ export default class GithubDataPlugin extends Plugin {
 				);
 				failed++;
 			}
+			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
 		new Notice(
@@ -431,7 +542,8 @@ export default class GithubDataPlugin extends Plugin {
 			);
 			if (result.ok) {
 				ok++;
-				this.settings.lastSyncedAt[entry] = result.syncedAt ?? "";
+				this.settings.lastSyncedAt[canonicalizeRepoEntry(entry)] =
+					result.syncedAt ?? "";
 			} else {
 				console.warn(
 					`[github-data] sync failed for ${entry}:`,
@@ -439,6 +551,7 @@ export default class GithubDataPlugin extends Plugin {
 				);
 				failed++;
 			}
+			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
 		await this.saveSettings();
@@ -476,9 +589,53 @@ export default class GithubDataPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/**
+	 * Persist a sync failure reason for a repo so the Sync Progress view
+	 * can surface it. Safe to call with an unknown error -- the reason
+	 * is coerced to a bounded string and a matching kind. Keyed by the
+	 * canonical (lowercased, trimmed) repo form so reads + writes agree
+	 * even if the allowlist has a hand-edited non-canonical entry.
+	 */
+	async recordSyncError(repo: string, reason: unknown): Promise<void> {
+		const key = canonicalizeRepoEntry(repo);
+		const { message, kind } = classifySyncError(reason);
+		this.settings.lastSyncError[key] = {
+			at: new Date().toISOString(),
+			message,
+			kind,
+		};
+		await this.saveSettings();
+	}
+
+	/** Clear any persisted failure for a repo. Called on successful sync. */
+	async clearSyncError(repo: string): Promise<void> {
+		const key = canonicalizeRepoEntry(repo);
+		if (!(key in this.settings.lastSyncError)) return;
+		delete this.settings.lastSyncError[key];
+		await this.saveSettings();
+	}
+
 	/** Resolved PAT for the HTTP layer. Empty string when no token is set. */
 	getToken(): string {
 		return resolveToken(this.app, this.settings);
+	}
+
+	/**
+	 * Funnel point for a single-repo sync result. Persists the failure
+	 * reason on a miss and clears any stale entry on a hit. Keeps the
+	 * five command loops uniform and keeps the settings-mutation logic
+	 * out of the writers themselves.
+	 */
+	private async recordSyncOutcome(
+		repo: string,
+		ok: boolean,
+		reason: unknown,
+	): Promise<void> {
+		if (ok) {
+			await this.clearSyncError(repo);
+			return;
+		}
+		await this.recordSyncError(repo, reason);
 	}
 
 	private async onAppReady(): Promise<void> {

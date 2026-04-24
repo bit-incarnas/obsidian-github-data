@@ -32,6 +32,7 @@ Fields written to `data.json`:
 | `lastSyncedAt` | object | Map of `owner/repo` -> ISO-8601 timestamp of last successful sync. |
 | `devVaultGitNoticeShown` | boolean | One-shot flag: dev-vault `.git` warning already displayed. |
 | `disableBodySanitation` | boolean | Advanced toggle. When true, user-safety sanitation is bypassed on synced body content; vault-integrity sanitation (wikilink `..` rewrite, persist-block marker escape) always runs. Default false. See README for full trade-off copy. |
+| `lastSyncError` | object | Map of `owner/repo` -> `{ at: ISO-8601, message: string, kind: "network" \| "http-4xx" \| "http-5xx" \| "circuit-open" \| "unknown" }`. Populated by the sync engine on failure; cleared on the next successful sync for that repo. Surfaced in the Sync Progress view. |
 | `logLevel` | string | `debug` / `info` / `warning` / `error`. |
 
 > **If SecretStorage is unavailable** and your vault is under version control, add `.obsidian/plugins/github-data/data.json` to `.gitignore` -- the plugin surfaces a one-time notice at load-time to remind you.

@@ -48,7 +48,31 @@ export interface GithubDataSettings {
 	 * controlled repos.
 	 */
 	disableBodySanitation: boolean;
+
+	/**
+	 * Last sync failure per repo (`owner/repo` -> record). Populated by
+	 * the sync engine; cleared on next successful sync for that repo.
+	 * Used by the Sync Progress view to surface failures at a glance
+	 * without parsing logs.
+	 */
+	lastSyncError: Record<string, SyncErrorRecord>;
 }
+
+export interface SyncErrorRecord {
+	/** ISO-8601 UTC timestamp when the failure was recorded. */
+	at: string;
+	/** Short human-readable reason (already sanitized by the sync loop). */
+	message: string;
+	/** Rough kind bucket the view can badge. */
+	kind: SyncErrorKind;
+}
+
+export type SyncErrorKind =
+	| "network"
+	| "http-4xx"
+	| "http-5xx"
+	| "circuit-open"
+	| "unknown";
 
 export const DEFAULT_SETTINGS: GithubDataSettings = {
 	schemaVersion: 1,
@@ -61,6 +85,7 @@ export const DEFAULT_SETTINGS: GithubDataSettings = {
 	activitySyncDays: 30,
 	lastSyncedAt: {},
 	disableBodySanitation: false,
+	lastSyncError: {},
 };
 
 /**
@@ -86,7 +111,37 @@ export function mergeSettings(
 		// "false" or any other non-boolean payload can't silently
 		// enable the user-safety bypass via a truthy check.
 		disableBodySanitation: loaded?.disableBodySanitation === true,
+		// Defensive copy so view-rendering code can't mutate persisted
+		// state; guards against corrupted payloads (non-object) too.
+		lastSyncError: normalizeSyncErrorMap(loaded?.lastSyncError),
 	};
+}
+
+const SYNC_ERROR_KINDS: ReadonlySet<SyncErrorKind> = new Set([
+	"network",
+	"http-4xx",
+	"http-5xx",
+	"circuit-open",
+	"unknown",
+]);
+
+function normalizeSyncErrorMap(
+	raw: unknown,
+): Record<string, SyncErrorRecord> {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+	const out: Record<string, SyncErrorRecord> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+		const v = value as Partial<SyncErrorRecord>;
+		if (typeof v.at !== "string" || typeof v.message !== "string") continue;
+		const kind: SyncErrorKind =
+			typeof v.kind === "string" &&
+			SYNC_ERROR_KINDS.has(v.kind as SyncErrorKind)
+				? (v.kind as SyncErrorKind)
+				: "unknown";
+		out[key] = { at: v.at, message: v.message, kind };
+	}
+	return out;
 }
 
 /**

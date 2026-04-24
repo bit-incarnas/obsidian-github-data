@@ -55,6 +55,47 @@ export class Modal {
 	onClose: any = jest.fn();
 }
 
+export class WorkspaceLeaf {
+	view: any = null;
+	setViewState: any = jest.fn(async (_state: unknown) => {});
+	getViewState: any = jest.fn(() => ({}));
+	detach: any = jest.fn();
+}
+
+export class ItemView {
+	app: any;
+	leaf: any;
+	containerEl: HTMLElement;
+	contentEl: HTMLElement;
+	constructor(leaf: any) {
+		this.leaf = leaf;
+		this.app = leaf?.app ?? null;
+		this.containerEl = document.createElement("div");
+		this.contentEl = document.createElement("div");
+		this.containerEl.appendChild(this.contentEl);
+	}
+	// Prototype methods so subclass overrides take effect.
+	// (Using `= jest.fn()` class-field syntax would set instance fields
+	// that shadow the subclass prototype methods.)
+	getViewType(): string {
+		return "";
+	}
+	getDisplayText(): string {
+		return "";
+	}
+	getIcon(): string {
+		return "";
+	}
+	async onOpen(): Promise<void> {}
+	async onClose(): Promise<void> {}
+	registerEvent(_e: unknown): void {}
+	registerInterval(id: number): number {
+		return id;
+	}
+	registerDomEvent(): void {}
+	addChild(): void {}
+}
+
 export class PluginSettingTab {
 	app: any;
 	plugin: any;

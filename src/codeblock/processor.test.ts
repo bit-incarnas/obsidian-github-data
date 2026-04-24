@@ -20,6 +20,7 @@ function makeSettings(
 		activitySyncDays: 30,
 		lastSyncedAt: {},
 		disableBodySanitation: false,
+		lastSyncError: {},
 	};
 }
 
