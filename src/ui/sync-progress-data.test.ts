@@ -102,6 +102,49 @@ describe("buildRepoStatusRows", () => {
 		expect(rows.map((r) => r.repo)).toEqual(["good/repo"]);
 	});
 
+	test("allowlist entries with extra '/' segments are dropped (not truncated)", () => {
+		const rows = buildRepoStatusRows(
+			{
+				...DEFAULT_SETTINGS,
+				repoAllowlist: [
+					"owner/repo/extra",
+					"a/b/c/d",
+					"/leading",
+					"trailing/",
+					"real/repo",
+				],
+			},
+			[],
+		);
+		expect(rows.map((r) => r.repo)).toEqual(["real/repo"]);
+	});
+
+	test("lastSyncedAt + lastSyncError lookups use canonical (lowercased, trimmed) keys", () => {
+		// Simulates a hand-edited allowlist entry with non-canonical
+		// whitespace + case while the sync loops persist their state
+		// under the canonical form.
+		const rows = buildRepoStatusRows(
+			{
+				...DEFAULT_SETTINGS,
+				repoAllowlist: ["  Bit-Incarnas/Eden  "],
+				lastSyncedAt: {
+					"bit-incarnas/eden": "2026-04-23T00:00:00Z",
+				},
+				lastSyncError: {
+					"bit-incarnas/eden": {
+						at: "2026-04-23T01:00:00Z",
+						message: "boom",
+						kind: "http-5xx",
+					},
+				},
+			},
+			[],
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].lastSyncedAt).toBe("2026-04-23T00:00:00Z");
+		expect(rows[0].lastError?.message).toBe("boom");
+	});
+
 	test("trailing / leading whitespace trimmed", () => {
 		const rows = buildRepoStatusRows(
 			{

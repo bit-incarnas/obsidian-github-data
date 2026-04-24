@@ -61,17 +61,25 @@ export function buildRepoStatusRows(
 	const rows: RepoStatusRow[] = [];
 	for (const entry of settings.repoAllowlist) {
 		const trimmed = entry.trim();
-		const slash = trimmed.indexOf("/");
-		if (slash <= 0 || slash === trimmed.length - 1) continue;
-		const repoKey = trimmed.toLowerCase();
-		const [owner, repo] = repoKey.split("/", 2);
+		// Require exactly two non-empty path segments. Drops "invalid",
+		// "owner/", "/repo", and `owner/repo/extra` -- the last form
+		// previously slipped past an indexOf check and rendered a
+		// misleading truncated row.
+		const parts = trimmed.split("/");
+		if (parts.length !== 2 || !parts[0] || !parts[1]) continue;
+		const owner = parts[0].toLowerCase();
+		const repo = parts[1].toLowerCase();
+		const repoKey = `${owner}/${repo}`;
 		const counts = countEntitiesForRepo(owner, repo, files);
 		rows.push({
 			repo: trimmed,
 			repoKey,
-			lastSyncedAt: pickString(settings.lastSyncedAt[trimmed]),
+			// Read by canonical key so a non-canonical allowlist entry
+			// (e.g., hand-edited `data.json`) still resolves against
+			// writes made by the sync loops.
+			lastSyncedAt: pickString(settings.lastSyncedAt[repoKey]),
 			counts,
-			lastError: settings.lastSyncError[trimmed] ?? null,
+			lastError: settings.lastSyncError[repoKey] ?? null,
 		});
 	}
 	return rows;

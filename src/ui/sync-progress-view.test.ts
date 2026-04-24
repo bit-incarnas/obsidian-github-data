@@ -165,6 +165,79 @@ describe("SyncProgressView", () => {
 		);
 	});
 
+	test("rename handler fires re-render when file moves OUT of the repos root", async () => {
+		const handlers: Record<
+			string,
+			(file: { path: string }, oldPath?: string) => void
+		> = {};
+		const vault = {
+			getMarkdownFiles: () => [],
+			on: (
+				event: string,
+				handler: (file: { path: string }, oldPath?: string) => void,
+			) => {
+				handlers[event] = handler;
+				return { e: event };
+			},
+		};
+		const plugin = makePlugin({
+			settings: { ...DEFAULT_SETTINGS, repoAllowlist: ["a/b"] },
+			app: { vault },
+		});
+		const { view } = mountView(plugin);
+		// Let onOpen's promise settle (it's the only async path we care about).
+		await Promise.resolve();
+		const spy = jest.spyOn(view as any, "scheduleRerender");
+		// Move: the NEW path is outside the repos root; OLD path is inside.
+		handlers.rename?.(
+			{ path: "99_ARCHIVE/github/a__b/Issues/1.md" },
+			"02_AREAS/GitHub/Repos/a__b/Issues/1.md",
+		);
+		expect(spy).toHaveBeenCalledTimes(1);
+		// Move: NEW path inside, OLD path outside (reverse direction).
+		handlers.rename?.(
+			{ path: "02_AREAS/GitHub/Repos/a__b/Issues/2.md" },
+			"Scratch/2.md",
+		);
+		expect(spy).toHaveBeenCalledTimes(2);
+		// Move entirely outside the repos root: ignored.
+		handlers.rename?.(
+			{ path: "Scratch/x.md" },
+			"Scratch/y.md",
+		);
+		expect(spy).toHaveBeenCalledTimes(2);
+	});
+
+	test("rename handler rejects sibling-prefix paths (trailing slash anchor)", async () => {
+		const handlers: Record<
+			string,
+			(file: { path: string }, oldPath?: string) => void
+		> = {};
+		const vault = {
+			getMarkdownFiles: () => [],
+			on: (
+				event: string,
+				handler: (file: { path: string }, oldPath?: string) => void,
+			) => {
+				handlers[event] = handler;
+				return { e: event };
+			},
+		};
+		const plugin = makePlugin({
+			settings: { ...DEFAULT_SETTINGS, repoAllowlist: [] },
+			app: { vault },
+		});
+		const { view } = mountView(plugin);
+		await Promise.resolve();
+		const spy = jest.spyOn(view as any, "scheduleRerender");
+		// 02_AREAS/GitHub/Repos_Other/... is a sibling prefix, not a
+		// child of the repos root. Must NOT trigger re-render.
+		handlers.create?.({
+			path: "02_AREAS/GitHub/Repos_Other/sibling.md",
+		});
+		expect(spy).not.toHaveBeenCalled();
+	});
+
 	test("rate-limit snapshot: displays remaining/limit when populated", () => {
 		const plugin = makePlugin({
 			rateLimit: {

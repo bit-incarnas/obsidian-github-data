@@ -77,20 +77,32 @@ export class SyncProgressView extends ItemView {
 	async onOpen(): Promise<void> {
 		this.render();
 		// Auto-refresh when a synced file lands in / leaves the repos tree.
+		// Rename is special: Obsidian passes `(file, oldPath)` so we also
+		// fire the re-render when a file is moved OUT of the repos root
+		// (otherwise the count would be stale until manual refresh).
+		const rootPrefix = `${REPOS_ROOT.toLowerCase()}/`;
+		const isUnderReposRoot = (path?: string): boolean =>
+			!!path && path.toLowerCase().startsWith(rootPrefix);
 		const vault = this.plugin.app.vault as unknown as {
-			on?: (event: string, handler: (file: { path: string }) => void) => {
-				e?: unknown;
-			};
+			on?: (
+				event: string,
+				handler: (file: { path: string }, oldPath?: string) => void,
+			) => { e?: unknown };
 		};
 		if (typeof vault.on === "function") {
 			for (const event of ["create", "delete", "rename"] as const) {
-				const ref = vault.on(event, (file: { path: string }) => {
-					if (!file?.path) return;
-					if (!file.path.toLowerCase().startsWith(REPOS_ROOT.toLowerCase())) {
-						return;
-					}
-					this.scheduleRerender();
-				});
+				const ref = vault.on(
+					event,
+					(file: { path: string }, oldPath?: string) => {
+						if (
+							!isUnderReposRoot(file?.path) &&
+							!isUnderReposRoot(oldPath)
+						) {
+							return;
+						}
+						this.scheduleRerender();
+					},
+				);
 				if (ref) this.registerEvent(ref as never);
 			}
 		}

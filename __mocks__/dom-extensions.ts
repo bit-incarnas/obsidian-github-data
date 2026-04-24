@@ -6,7 +6,7 @@
  * These aren't part of the obsidian module -- they're added directly to
  * `HTMLElement.prototype` when Obsidian starts. Tests that render any
  * view / settings-tab DOM need them present. Loaded via
- * `setupFilesAfterEach` in jest.config.js.
+ * `setupFilesAfterEnv` in jest.config.js.
  *
  * Loose-typed on purpose: tests import real Obsidian types for
  * annotations, and rely on this module only for runtime behavior.

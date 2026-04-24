@@ -6,6 +6,7 @@ import { createGithubClient, type GithubClient } from "./github/client";
 import { Semaphore } from "./github/concurrency";
 import { RateLimitTracker } from "./github/rate-limit";
 import { parseRepoPath } from "./paths/sanitize";
+import { canonicalizeRepoEntry } from "./settings/allowlist";
 import { GithubDataSettingTab } from "./settings/settings-tab";
 import { maybeShowDevVaultNotice } from "./settings/dev-vault-notice";
 import { resolveToken } from "./settings/secret-storage";
@@ -541,7 +542,8 @@ export default class GithubDataPlugin extends Plugin {
 			);
 			if (result.ok) {
 				ok++;
-				this.settings.lastSyncedAt[entry] = result.syncedAt ?? "";
+				this.settings.lastSyncedAt[canonicalizeRepoEntry(entry)] =
+					result.syncedAt ?? "";
 			} else {
 				console.warn(
 					`[github-data] sync failed for ${entry}:`,
@@ -590,11 +592,14 @@ export default class GithubDataPlugin extends Plugin {
 	/**
 	 * Persist a sync failure reason for a repo so the Sync Progress view
 	 * can surface it. Safe to call with an unknown error -- the reason
-	 * is coerced to a bounded string and a matching kind.
+	 * is coerced to a bounded string and a matching kind. Keyed by the
+	 * canonical (lowercased, trimmed) repo form so reads + writes agree
+	 * even if the allowlist has a hand-edited non-canonical entry.
 	 */
 	async recordSyncError(repo: string, reason: unknown): Promise<void> {
+		const key = canonicalizeRepoEntry(repo);
 		const { message, kind } = classifySyncError(reason);
-		this.settings.lastSyncError[repo] = {
+		this.settings.lastSyncError[key] = {
 			at: new Date().toISOString(),
 			message,
 			kind,
@@ -604,8 +609,9 @@ export default class GithubDataPlugin extends Plugin {
 
 	/** Clear any persisted failure for a repo. Called on successful sync. */
 	async clearSyncError(repo: string): Promise<void> {
-		if (!(repo in this.settings.lastSyncError)) return;
-		delete this.settings.lastSyncError[repo];
+		const key = canonicalizeRepoEntry(repo);
+		if (!(key in this.settings.lastSyncError)) return;
+		delete this.settings.lastSyncError[key];
 		await this.saveSettings();
 	}
 
