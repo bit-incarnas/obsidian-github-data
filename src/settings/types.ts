@@ -82,6 +82,10 @@ export function mergeSettings(
 		lastSyncedAt: { ...(loaded?.lastSyncedAt ?? {}) },
 		repoAllowlist: [...(loaded?.repoAllowlist ?? [])],
 		activitySyncDays: clampActivitySyncDays(loaded?.activitySyncDays),
+		// Security-sensitive: coerce strictly so a persisted string
+		// "false" or any other non-boolean payload can't silently
+		// enable the user-safety bypass via a truthy check.
+		disableBodySanitation: loaded?.disableBodySanitation === true,
 	};
 }
 
