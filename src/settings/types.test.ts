@@ -91,6 +91,73 @@ describe("mergeSettings", () => {
 		});
 	});
 
+	describe("lastSyncError normalization", () => {
+		test("default is empty map", () => {
+			expect(mergeSettings({}).lastSyncError).toEqual({});
+			expect(DEFAULT_SETTINGS.lastSyncError).toEqual({});
+		});
+
+		test("copy is defensive (not same reference)", () => {
+			const map = {
+				"a/b": {
+					at: "2026-04-23T00:00:00Z",
+					message: "network",
+					kind: "network" as const,
+				},
+			};
+			const result = mergeSettings({ lastSyncError: map });
+			expect(result.lastSyncError).toEqual(map);
+			expect(result.lastSyncError).not.toBe(map);
+		});
+
+		test("non-object payload coerces to empty map", () => {
+			expect(
+				mergeSettings({
+					lastSyncError: "hostile" as unknown as Record<
+						string,
+						never
+					>,
+				}).lastSyncError,
+			).toEqual({});
+			expect(
+				mergeSettings({
+					lastSyncError: [1, 2, 3] as unknown as Record<
+						string,
+						never
+					>,
+				}).lastSyncError,
+			).toEqual({});
+		});
+
+		test("entries missing required fields are dropped", () => {
+			const result = mergeSettings({
+				lastSyncError: {
+					"good/repo": {
+						at: "2026-04-23T00:00:00Z",
+						message: "ok",
+						kind: "http-4xx",
+					},
+					"bad/repo": { message: "no at" } as unknown as never,
+					"also/bad": "not-an-object" as unknown as never,
+				},
+			});
+			expect(Object.keys(result.lastSyncError)).toEqual(["good/repo"]);
+		});
+
+		test("unknown kind coerces to 'unknown'", () => {
+			const result = mergeSettings({
+				lastSyncError: {
+					"a/b": {
+						at: "2026-04-23T00:00:00Z",
+						message: "weird",
+						kind: "fabricated" as unknown as "unknown",
+					},
+				},
+			});
+			expect(result.lastSyncError["a/b"].kind).toBe("unknown");
+		});
+	});
+
 	describe("activitySyncDays clamp (regression guard)", () => {
 		test("valid value preserved", () => {
 			expect(mergeSettings({ activitySyncDays: 90 }).activitySyncDays).toBe(

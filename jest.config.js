@@ -2,6 +2,7 @@
 module.exports = {
 	preset: "ts-jest",
 	testEnvironment: "jsdom",
+	setupFilesAfterEnv: ["<rootDir>/__mocks__/dom-extensions.ts"],
 	moduleNameMapper: {
 		"^obsidian$": "<rootDir>/__mocks__/obsidian.ts",
 	},

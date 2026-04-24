@@ -52,10 +52,10 @@ describe("GithubDataPlugin", () => {
 		expect(plugin.addSettingTab).toHaveBeenCalledTimes(1);
 	});
 
-	test("registers ping + all sync commands", async () => {
+	test("registers ping + all sync commands + sync-progress view", async () => {
 		const plugin = new GithubDataPlugin(app, manifest);
 		await plugin.onload();
-		expect(plugin.addCommand).toHaveBeenCalledTimes(7);
+		expect(plugin.addCommand).toHaveBeenCalledTimes(8);
 		const ids = (plugin.addCommand as jest.Mock).mock.calls.map(
 			(c) => c[0].id,
 		);
@@ -66,6 +66,16 @@ describe("GithubDataPlugin", () => {
 		expect(ids).toContain("sync-releases");
 		expect(ids).toContain("sync-dependabot");
 		expect(ids).toContain("sync-activity");
+		expect(ids).toContain("open-sync-progress");
+	});
+
+	test("registers the sync-progress view + ribbon icon", async () => {
+		const plugin = new GithubDataPlugin(app, manifest);
+		await plugin.onload();
+		expect(plugin.registerView).toHaveBeenCalledTimes(1);
+		const [viewType] = (plugin.registerView as jest.Mock).mock.calls[0];
+		expect(viewType).toBe("github-data-sync-progress");
+		expect(plugin.addRibbonIcon).toHaveBeenCalledTimes(1);
 	});
 
 	test("getToken returns empty string when no token stored", async () => {
