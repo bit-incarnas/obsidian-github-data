@@ -46,6 +46,8 @@ export interface RepoPullRequestSyncOptions {
 	allowlist: string[];
 	vaultRoot?: string;
 	now?: () => Date;
+	/** Bypass user-safety body sanitation. Vault-integrity passes still run. */
+	disableBodySanitation?: boolean;
 }
 
 export interface RepoPullRequestSyncResult {
@@ -69,6 +71,7 @@ export async function syncRepoPullRequests(
 	const { client, writer, allowlist } = options;
 	const vaultRoot = options.vaultRoot ?? DEFAULT_ROOT;
 	const now = options.now ?? (() => new Date());
+	const disableBodySanitation = options.disableBodySanitation ?? false;
 
 	const validated = validateRepoName(owner, repo);
 	if (!validated.valid) {
@@ -131,6 +134,7 @@ export async function syncRepoPullRequests(
 				repo,
 				fileResult.path,
 				writer,
+				disableBodySanitation,
 			);
 			await writer.writeFile(fileResult.path, body);
 			await writer.updateFrontmatter(fileResult.path, (fm) => {
@@ -151,8 +155,9 @@ async function composePullRequestFile(
 	repo: string,
 	filePath: string,
 	writer: VaultWriter,
+	disableBodySanitation: boolean,
 ): Promise<string> {
-	const fresh = buildPullRequestBody(pr, owner, repo);
+	const fresh = buildPullRequestBody(pr, owner, repo, disableBodySanitation);
 	if (await writer.pathExists(filePath)) {
 		try {
 			const existing = await writer.readFile(filePath);
@@ -171,6 +176,7 @@ function buildPullRequestBody(
 	pr: PullItem,
 	owner: string,
 	repo: string,
+	disableBodySanitation: boolean,
 ): string {
 	const lines: string[] = [];
 	const titleSafe = pr.title ?? "(untitled)";
@@ -221,7 +227,11 @@ function buildPullRequestBody(
 	lines.push("## :: DESCRIPTION");
 	lines.push("");
 	if (pr.body && pr.body.length > 0) {
-		lines.push(sanitizeGithubMarkdown(pr.body));
+		lines.push(
+			sanitizeGithubMarkdown(pr.body, {
+				disableUserSafetySanitation: disableBodySanitation,
+			}),
+		);
 	} else {
 		lines.push("_(no description)_");
 	}

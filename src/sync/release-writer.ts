@@ -46,6 +46,8 @@ export interface RepoReleaseSyncOptions {
 	allowlist: string[];
 	vaultRoot?: string;
 	now?: () => Date;
+	/** Bypass user-safety body sanitation. Vault-integrity passes still run. */
+	disableBodySanitation?: boolean;
 }
 
 export interface RepoReleaseSyncResult {
@@ -69,6 +71,7 @@ export async function syncRepoReleases(
 	const { client, writer, allowlist } = options;
 	const vaultRoot = options.vaultRoot ?? DEFAULT_ROOT;
 	const now = options.now ?? (() => new Date());
+	const disableBodySanitation = options.disableBodySanitation ?? false;
 
 	const validated = validateRepoName(owner, repo);
 	if (!validated.valid) {
@@ -140,6 +143,7 @@ export async function syncRepoReleases(
 				repo,
 				fileResult.path,
 				writer,
+				disableBodySanitation,
 			);
 			await writer.writeFile(fileResult.path, body);
 			await writer.updateFrontmatter(fileResult.path, (fm) => {
@@ -160,8 +164,9 @@ async function composeReleaseFile(
 	repo: string,
 	filePath: string,
 	writer: VaultWriter,
+	disableBodySanitation: boolean,
 ): Promise<string> {
-	const fresh = buildReleaseBody(release, owner, repo);
+	const fresh = buildReleaseBody(release, owner, repo, disableBodySanitation);
 	if (await writer.pathExists(filePath)) {
 		try {
 			const existing = await writer.readFile(filePath);
@@ -180,6 +185,7 @@ function buildReleaseBody(
 	release: ReleaseItem,
 	owner: string,
 	repo: string,
+	disableBodySanitation: boolean,
 ): string {
 	const lines: string[] = [];
 	const tag = release.tag_name ?? "(no tag)";
@@ -220,7 +226,11 @@ function buildReleaseBody(
 	lines.push("## :: NOTES");
 	lines.push("");
 	if (release.body && release.body.length > 0) {
-		lines.push(sanitizeGithubMarkdown(release.body));
+		lines.push(
+			sanitizeGithubMarkdown(release.body, {
+				disableUserSafetySanitation: disableBodySanitation,
+			}),
+		);
 	} else {
 		lines.push("_(no release notes)_");
 	}

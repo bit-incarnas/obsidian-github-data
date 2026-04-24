@@ -36,6 +36,12 @@ export default class GithubDataPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
+		if (this.settings.disableBodySanitation) {
+			console.warn(
+				"[github-data] body sanitation DISABLED via settings -- Templater/Dataview/script neutralization bypassed on every synced body. Vault-integrity passes (wikilink `..` rewrite, persist-block escape) still run.",
+			);
+		}
+
 		this.addSettingTab(new GithubDataSettingTab(this.app, this));
 
 		this.addCommand({
@@ -181,7 +187,12 @@ export default class GithubDataPlugin extends Plugin {
 			const result = await syncRepoDependabotAlerts(
 				parsed.owner,
 				parsed.repo,
-				{ client, writer, allowlist },
+				{
+					client,
+					writer,
+					allowlist,
+					disableBodySanitation: this.settings.disableBodySanitation,
+				},
 			);
 			if (result.ok) {
 				if (result.skipped === "alerts-disabled") {
@@ -242,6 +253,7 @@ export default class GithubDataPlugin extends Plugin {
 				client,
 				writer,
 				allowlist,
+				disableBodySanitation: this.settings.disableBodySanitation,
 			});
 			if (result.ok) {
 				synced += result.syncedCount ?? 0;
@@ -296,7 +308,12 @@ export default class GithubDataPlugin extends Plugin {
 			const result = await syncRepoPullRequests(
 				parsed.owner,
 				parsed.repo,
-				{ client, writer, allowlist },
+				{
+					client,
+					writer,
+					allowlist,
+					disableBodySanitation: this.settings.disableBodySanitation,
+				},
 			);
 			if (result.ok) {
 				synced += result.syncedCount ?? 0;
@@ -352,6 +369,7 @@ export default class GithubDataPlugin extends Plugin {
 				client,
 				writer,
 				allowlist,
+				disableBodySanitation: this.settings.disableBodySanitation,
 			});
 			if (result.ok) {
 				synced += result.syncedCount ?? 0;
@@ -404,7 +422,12 @@ export default class GithubDataPlugin extends Plugin {
 			const result = await syncRepoProfile(
 				parsed.owner,
 				parsed.repo,
-				{ client, writer, allowlist },
+				{
+					client,
+					writer,
+					allowlist,
+					disableBodySanitation: this.settings.disableBodySanitation,
+				},
 			);
 			if (result.ok) {
 				ok++;

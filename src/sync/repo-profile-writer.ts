@@ -53,6 +53,8 @@ export interface RepoProfileSyncOptions {
 	vaultRoot?: string;
 	/** Clock injection for deterministic tests. */
 	now?: () => Date;
+	/** Bypass user-safety body sanitation. Vault-integrity passes still run. */
+	disableBodySanitation?: boolean;
 }
 
 export interface SyncResult {
@@ -77,6 +79,7 @@ export async function syncRepoProfile(
 	const { client, writer, allowlist } = options;
 	const vaultRoot = options.vaultRoot ?? DEFAULT_ROOT;
 	const now = options.now ?? (() => new Date());
+	const disableBodySanitation = options.disableBodySanitation ?? false;
 
 	// Validate + enforce allowlist up front.
 	const validated = validateRepoName(owner, repo);
@@ -140,7 +143,11 @@ export async function syncRepoProfile(
 	}
 
 	const syncedAt = now().toISOString();
-	const freshBody = buildRepoProfileBody(repoData, readmeMarkdown);
+	const freshBody = buildRepoProfileBody(
+		repoData,
+		readmeMarkdown,
+		disableBodySanitation,
+	);
 
 	// Ensure the target folder exists before any read/write.
 	await writer.ensureFolder(vaultRoot);
@@ -200,6 +207,7 @@ function setRepoProfileFrontmatter(
 function buildRepoProfileBody(
 	repo: Repo,
 	readmeMarkdown: string | null,
+	disableBodySanitation: boolean,
 ): string {
 	const lines: string[] = [];
 	lines.push(`# ${repo.full_name}`);
@@ -231,7 +239,11 @@ function buildRepoProfileBody(
 	if (readmeMarkdown && readmeMarkdown.length > 0) {
 		lines.push("## :: README");
 		lines.push("");
-		lines.push(sanitizeGithubMarkdown(readmeMarkdown));
+		lines.push(
+			sanitizeGithubMarkdown(readmeMarkdown, {
+				disableUserSafetySanitation: disableBodySanitation,
+			}),
+		);
 		lines.push("");
 	}
 

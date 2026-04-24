@@ -28,7 +28,10 @@ Fields written to `data.json`:
 | `useSecretStorage` | boolean | Whether PAT is in SecretStorage. |
 | `secretTokenName` | string | SecretStorage key name when migrated. |
 | `syncCadenceMinutes` | number | Background sync interval (default 15). |
-| `lastSyncedAt` | ISO-8601 | Last successful sync timestamp per repo. |
+| `activitySyncDays` | number | Days back from today pulled by `Sync activity` (1-365, default 30). |
+| `lastSyncedAt` | object | Map of `owner/repo` -> ISO-8601 timestamp of last successful sync. |
+| `devVaultGitNoticeShown` | boolean | One-shot flag: dev-vault `.git` warning already displayed. |
+| `disableBodySanitation` | boolean | Advanced toggle. When true, user-safety sanitation is bypassed on synced body content; vault-integrity sanitation (wikilink `..` rewrite, persist-block marker escape) always runs. Default false. See README for full trade-off copy. |
 | `logLevel` | string | `debug` / `info` / `warning` / `error`. |
 
 > **If SecretStorage is unavailable** and your vault is under version control, add `.obsidian/plugins/github-data/data.json` to `.gitignore` -- the plugin surfaces a one-time notice at load-time to remind you.
@@ -45,7 +48,7 @@ Fields written to `data.json`:
 **What:** mirrored GitHub entities (repos, issues, PRs, releases, Dependabot alerts, activity summaries).
 **Where:** `02_AREAS/GitHub/` and `99_ARCHIVE/github/` by default (configurable).
 **Encryption:** whatever your vault provides (Obsidian Sync supports end-to-end encryption; iCloud / Dropbox do not by default).
-**Contents:** markdown files with structured frontmatter. Issue / PR / README bodies are sanitized before write to neutralize HTML injections, Templater exec markers, and Dataview inline queries (see the plugin's Security Invariants).
+**Contents:** markdown files with structured frontmatter. Vault-integrity sanitation (wikilink `..` rewrite, persist-block marker escape) always runs before write. User-safety sanitation (HTML injections, Templater exec markers, Dataview inline queries) runs by default and can be bypassed via the advanced `disableBodySanitation` setting -- see README for the trade-offs. Security Invariants still apply either way.
 
 Frontmatter shape per entity class is documented in the main design doc (will be published under `docs/design.md` at v0.1).
 

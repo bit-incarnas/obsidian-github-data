@@ -34,6 +34,20 @@ export interface GithubDataSettings {
 
 	/** Last successful sync per repo (ISO-8601 UTC). Populated by the sync engine. */
 	lastSyncedAt: Record<string, string>;
+
+	/**
+	 * Power-user escape hatch. When true, user-safety sanitation is
+	 * bypassed on every GitHub body write (issues, PRs, releases, repo
+	 * README, Dependabot advisory descriptions). Vault-integrity
+	 * sanitation (wikilink `..` rewrite, persist-block marker escape)
+	 * always runs regardless of this setting.
+	 *
+	 * Trades: Templater RCE, Dataview query injection, and raw HTML
+	 * (script / iframe / event handlers / `javascript:` URLs) become
+	 * possible from any synced GitHub body. Only enable on fully-
+	 * controlled repos.
+	 */
+	disableBodySanitation: boolean;
 }
 
 export const DEFAULT_SETTINGS: GithubDataSettings = {
@@ -46,6 +60,7 @@ export const DEFAULT_SETTINGS: GithubDataSettings = {
 	syncCadenceMinutes: 15,
 	activitySyncDays: 30,
 	lastSyncedAt: {},
+	disableBodySanitation: false,
 };
 
 /**
@@ -67,6 +82,10 @@ export function mergeSettings(
 		lastSyncedAt: { ...(loaded?.lastSyncedAt ?? {}) },
 		repoAllowlist: [...(loaded?.repoAllowlist ?? [])],
 		activitySyncDays: clampActivitySyncDays(loaded?.activitySyncDays),
+		// Security-sensitive: coerce strictly so a persisted string
+		// "false" or any other non-boolean payload can't silently
+		// enable the user-safety bypass via a truthy check.
+		disableBodySanitation: loaded?.disableBodySanitation === true,
 	};
 }
 
