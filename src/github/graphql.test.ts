@@ -32,7 +32,7 @@ function mainResponse(overrides: {
 	};
 } = {}) {
 	return {
-		user: {
+		viewer: {
 			contributionsCollection: {
 				totalCommitContributions: overrides.totals?.commits ?? 0,
 				totalIssueContributions: overrides.totals?.issues ?? 0,
@@ -101,7 +101,6 @@ describe("fetchContributionsCollection", () => {
 		const client = mockClient(async () => response);
 		const result = await fetchContributionsCollection(
 			client,
-			"bit-incarnas",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 		);
@@ -110,7 +109,7 @@ describe("fetchContributionsCollection", () => {
 		expect(result.pullRequestContributions.nodes).toEqual([]);
 	});
 
-	test("passes login + window as variables", async () => {
+	test("passes window as variables (no login)", async () => {
 		const graphql = jest.fn(
 			async (_query: string, _variables?: Record<string, unknown>) =>
 				mainResponse(),
@@ -118,28 +117,29 @@ describe("fetchContributionsCollection", () => {
 		const client = mockClient(graphql);
 		await fetchContributionsCollection(
 			client,
-			"bit-incarnas",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 		);
 		const vars = graphql.mock.calls[0][1];
 		expect(vars).toEqual({
-			login: "bit-incarnas",
 			from: "2026-04-01T00:00:00Z",
 			to: "2026-04-22T00:00:00Z",
 		});
+		// Query should reference viewer, not user(login)
+		const query = String(graphql.mock.calls[0][0]);
+		expect(query).toContain("viewer");
+		expect(query).not.toContain("user(login");
 	});
 
-	test("throws when user is not found", async () => {
-		const client = mockClient(async () => ({ user: null }));
+	test("throws when viewer is not returned", async () => {
+		const client = mockClient(async () => ({ viewer: null }));
 		await expect(
 			fetchContributionsCollection(
 				client,
-				"ghost",
 				"2026-04-01T00:00:00Z",
 				"2026-04-22T00:00:00Z",
 			),
-		).rejects.toThrow(/User not found/);
+		).rejects.toThrow(/Viewer contributions not returned/);
 	});
 
 	test("propagates GraphQL errors", async () => {
@@ -149,7 +149,6 @@ describe("fetchContributionsCollection", () => {
 		await expect(
 			fetchContributionsCollection(
 				client,
-				"x",
 				"2026-04-01T00:00:00Z",
 				"2026-04-22T00:00:00Z",
 			),
@@ -164,7 +163,6 @@ describe("fetchContributionsCollection", () => {
 		const client = mockClient(graphql);
 		await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 		);
@@ -209,7 +207,7 @@ describe("fetchContributionsCollection -- pagination", () => {
 			async (query: string, _variables?: Record<string, unknown>) => {
 				if (query.includes("PaginatePullRequests")) {
 					return {
-						user: {
+						viewer: {
 							contributionsCollection: {
 								pullRequestContributions: {
 									pageInfo: { endCursor: null, hasNextPage: false },
@@ -232,7 +230,6 @@ describe("fetchContributionsCollection -- pagination", () => {
 
 		const result = await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 		);
@@ -248,7 +245,7 @@ describe("fetchContributionsCollection -- pagination", () => {
 			async (query: string, _variables?: Record<string, unknown>) => {
 				if (query.includes("PaginatePullRequests")) {
 					return {
-						user: {
+						viewer: {
 							contributionsCollection: {
 								pullRequestContributions: {
 									pageInfo: { endCursor: null, hasNextPage: false },
@@ -260,7 +257,7 @@ describe("fetchContributionsCollection -- pagination", () => {
 				}
 				if (query.includes("PaginateIssues")) {
 					return {
-						user: {
+						viewer: {
 							contributionsCollection: {
 								issueContributions: {
 									pageInfo: { endCursor: null, hasNextPage: false },
@@ -272,7 +269,7 @@ describe("fetchContributionsCollection -- pagination", () => {
 				}
 				if (query.includes("PaginateReviews")) {
 					return {
-						user: {
+						viewer: {
 							contributionsCollection: {
 								pullRequestReviewContributions: {
 									pageInfo: { endCursor: null, hasNextPage: false },
@@ -293,7 +290,6 @@ describe("fetchContributionsCollection -- pagination", () => {
 
 		await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 		);
@@ -312,7 +308,6 @@ describe("fetchContributionsCollection -- pagination", () => {
 
 		await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 			{ onWarning: (m) => warnings.push(m) },
@@ -330,7 +325,7 @@ describe("fetchContributionsCollection -- pagination", () => {
 				if (query.includes("PaginatePullRequests")) {
 					// Always reports more pages -- runaway loop protection
 					return {
-						user: {
+						viewer: {
 							contributionsCollection: {
 								pullRequestContributions: {
 									pageInfo: { endCursor: "next", hasNextPage: true },
@@ -349,7 +344,6 @@ describe("fetchContributionsCollection -- pagination", () => {
 
 		await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 			{ onWarning: (m) => warnings.push(m) },
@@ -372,7 +366,6 @@ describe("fetchContributionsCollection -- pagination", () => {
 
 		await fetchContributionsCollection(
 			client,
-			"x",
 			"2026-04-01T00:00:00Z",
 			"2026-04-22T00:00:00Z",
 			{ onWarning: (m) => warnings.push(m) },

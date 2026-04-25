@@ -145,7 +145,7 @@ export async function syncActivity(
 
 	let data: ContributionsCollection;
 	try {
-		data = await fetchContributionsCollection(client, login, fromIso, toIso);
+		data = await fetchContributionsCollection(client, fromIso, toIso);
 	} catch (err) {
 		return {
 			ok: false,

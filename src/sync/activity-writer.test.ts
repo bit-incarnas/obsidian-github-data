@@ -34,7 +34,7 @@ function mainResponse(
 ): unknown {
 	const base = { ...emptyCollection(), ...overrides };
 	return {
-		user: {
+		viewer: {
 			contributionsCollection: {
 				totalCommitContributions: base.totalCommitContributions,
 				totalIssueContributions: base.totalIssueContributions,

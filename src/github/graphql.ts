@@ -7,14 +7,26 @@
  * around.
  *
  * Current consumers:
- * - `fetchViewerLogin` -- one-shot `{ viewer { login } }` lookup, used to
- *   identify the authenticated user for contributionsCollection queries.
- * - `fetchContributionsCollection` -- the user's activity across repos
- *   for a time window, used by the activity aggregator to build daily
- *   rollup files. Returns commits-by-repo + opened PRs + opened issues
- *   + given reviews with occurredAt timestamps and sub-shapes sufficient
- *   to derive "prs_merged" / "issues_closed" on the actual merge/close
- *   dates rather than the opened-at date.
+ * - `fetchViewerLogin` -- one-shot `{ viewer { login } }` lookup, used
+ *   for diagnostics + as the resolved login surfaced in `SyncActivityResult`.
+ * - `fetchContributionsCollection` -- the authenticated user's activity
+ *   across repos for a time window, used by the activity aggregator to
+ *   build daily rollup files. Returns commits-by-repo + opened PRs +
+ *   opened issues + given reviews with occurredAt timestamps and
+ *   sub-shapes sufficient to derive "prs_merged" / "issues_closed" on
+ *   the actual merge/close dates rather than the opened-at date.
+ *
+ * Why the `viewer` form (not `user(login: ...)`):
+ * - `user(login: ...).contributionsCollection` is treated by GitHub as a
+ *   third-party query and only returns what's visible on the user's
+ *   public profile graph. Even with the "Include private contributions
+ *   on profile" toggle ON, the per-repo / per-day breakdown for private
+ *   contributions is omitted -- the API returns only anonymized public
+ *   bucket counts. v0.0.4 used this form, which silently dropped every
+ *   private commit out of the activity feed.
+ * - `viewer.contributionsCollection` returns the authenticated user's
+ *   complete contributions including granular private-repo data, which
+ *   is what the activity aggregator actually needs.
  *
  * Date windows:
  * - GraphQL requires ISO-8601 DateTime for `from` / `to`.
@@ -108,7 +120,7 @@ interface PageInfo {
 }
 
 interface MainQueryResponse {
-	user: {
+	viewer: {
 		contributionsCollection: {
 			totalCommitContributions: number;
 			totalIssueContributions: number;
@@ -132,7 +144,7 @@ interface MainQueryResponse {
 }
 
 interface PaginatePullRequestsResponse {
-	user: {
+	viewer: {
 		contributionsCollection: {
 			pullRequestContributions: {
 				pageInfo: PageInfo;
@@ -143,7 +155,7 @@ interface PaginatePullRequestsResponse {
 }
 
 interface PaginateIssuesResponse {
-	user: {
+	viewer: {
 		contributionsCollection: {
 			issueContributions: {
 				pageInfo: PageInfo;
@@ -154,7 +166,7 @@ interface PaginateIssuesResponse {
 }
 
 interface PaginateReviewsResponse {
-	user: {
+	viewer: {
 		contributionsCollection: {
 			pullRequestReviewContributions: {
 				pageInfo: PageInfo;
@@ -184,8 +196,8 @@ export interface FetchContributionsOptions {
 const VIEWER_QUERY = `query ViewerLogin { viewer { login } }`;
 
 const MAIN_CONTRIBUTIONS_QUERY = `
-	query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
-		user(login: $login) {
+	query Contributions($from: DateTime!, $to: DateTime!) {
+		viewer {
 			contributionsCollection(from: $from, to: $to) {
 				totalCommitContributions
 				totalIssueContributions
@@ -243,12 +255,11 @@ const MAIN_CONTRIBUTIONS_QUERY = `
 
 const PAGINATE_PULL_REQUESTS_QUERY = `
 	query PaginatePullRequests(
-		$login: String!
 		$from: DateTime!
 		$to: DateTime!
 		$after: String!
 	) {
-		user(login: $login) {
+		viewer {
 			contributionsCollection(from: $from, to: $to) {
 				pullRequestContributions(first: 100, after: $after) {
 					pageInfo { endCursor hasNextPage }
@@ -271,12 +282,11 @@ const PAGINATE_PULL_REQUESTS_QUERY = `
 
 const PAGINATE_ISSUES_QUERY = `
 	query PaginateIssues(
-		$login: String!
 		$from: DateTime!
 		$to: DateTime!
 		$after: String!
 	) {
-		user(login: $login) {
+		viewer {
 			contributionsCollection(from: $from, to: $to) {
 				issueContributions(first: 100, after: $after) {
 					pageInfo { endCursor hasNextPage }
@@ -297,12 +307,11 @@ const PAGINATE_ISSUES_QUERY = `
 
 const PAGINATE_REVIEWS_QUERY = `
 	query PaginateReviews(
-		$login: String!
 		$from: DateTime!
 		$to: DateTime!
 		$after: String!
 	) {
-		user(login: $login) {
+		viewer {
 			contributionsCollection(from: $from, to: $to) {
 				pullRequestReviewContributions(first: 100, after: $after) {
 					pageInfo { endCursor hasNextPage }
@@ -328,9 +337,15 @@ export async function fetchViewerLogin(client: GithubClient): Promise<string> {
 }
 
 /**
- * Fetch a user's contributionsCollection for an arbitrary [from, to]
- * window (ISO-8601 datetimes). Follows cursor pagination on the three
- * cursored connections until exhausted or until `MAX_PAGES` is hit.
+ * Fetch the authenticated viewer's contributionsCollection for an
+ * arbitrary [from, to] window (ISO-8601 datetimes). Follows cursor
+ * pagination on the three cursored connections until exhausted or until
+ * `MAX_PAGES` is hit.
+ *
+ * Uses the `viewer` form, which returns granular private-repo
+ * contributions in addition to public ones. The third-party
+ * `user(login: ...)` form would silently drop private data even with
+ * the profile-toggle on (see module header).
  *
  * Warnings:
  * - If `commitContributionsByRepository` comes back at exactly 100
@@ -340,7 +355,6 @@ export async function fetchViewerLogin(client: GithubClient): Promise<string> {
  */
 export async function fetchContributionsCollection(
 	client: GithubClient,
-	login: string,
 	fromIso: string,
 	toIso: string,
 	options: FetchContributionsOptions = {},
@@ -350,12 +364,14 @@ export async function fetchContributionsCollection(
 
 	const main = await client.graphql<MainQueryResponse>(
 		MAIN_CONTRIBUTIONS_QUERY,
-		{ login, from: fromIso, to: toIso },
+		{ from: fromIso, to: toIso },
 	);
-	if (!main.user) {
-		throw new Error(`User not found: ${login}`);
+	if (!main.viewer) {
+		throw new Error(
+			`Viewer contributions not returned (auth failure or unexpected response shape).`,
+		);
 	}
-	const cc = main.user.contributionsCollection;
+	const cc = main.viewer.contributionsCollection;
 
 	const commitsByRepo = cc.commitContributionsByRepository;
 	if (commitsByRepo.length >= 100) {
@@ -368,7 +384,6 @@ export async function fetchContributionsCollection(
 	if (cc.pullRequestContributions.pageInfo.hasNextPage) {
 		const rest = await paginatePullRequests(
 			client,
-			login,
 			fromIso,
 			toIso,
 			cc.pullRequestContributions.pageInfo.endCursor ?? "",
@@ -381,7 +396,6 @@ export async function fetchContributionsCollection(
 	if (cc.issueContributions.pageInfo.hasNextPage) {
 		const rest = await paginateIssues(
 			client,
-			login,
 			fromIso,
 			toIso,
 			cc.issueContributions.pageInfo.endCursor ?? "",
@@ -394,7 +408,6 @@ export async function fetchContributionsCollection(
 	if (cc.pullRequestReviewContributions.pageInfo.hasNextPage) {
 		const rest = await paginateReviews(
 			client,
-			login,
 			fromIso,
 			toIso,
 			cc.pullRequestReviewContributions.pageInfo.endCursor ?? "",
@@ -418,7 +431,6 @@ export async function fetchContributionsCollection(
 
 async function paginatePullRequests(
 	client: GithubClient,
-	login: string,
 	fromIso: string,
 	toIso: string,
 	firstCursor: string,
@@ -436,10 +448,10 @@ async function paginatePullRequests(
 		}
 		const data = await client.graphql<PaginatePullRequestsResponse>(
 			PAGINATE_PULL_REQUESTS_QUERY,
-			{ login, from: fromIso, to: toIso, after: cursor },
+			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.user) break;
-		const page = data.user.contributionsCollection.pullRequestContributions;
+		if (!data.viewer) break;
+		const page = data.viewer.contributionsCollection.pullRequestContributions;
 		acc.push(...page.nodes);
 		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
 		pages += 1;
@@ -449,7 +461,6 @@ async function paginatePullRequests(
 
 async function paginateIssues(
 	client: GithubClient,
-	login: string,
 	fromIso: string,
 	toIso: string,
 	firstCursor: string,
@@ -467,10 +478,10 @@ async function paginateIssues(
 		}
 		const data = await client.graphql<PaginateIssuesResponse>(
 			PAGINATE_ISSUES_QUERY,
-			{ login, from: fromIso, to: toIso, after: cursor },
+			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.user) break;
-		const page = data.user.contributionsCollection.issueContributions;
+		if (!data.viewer) break;
+		const page = data.viewer.contributionsCollection.issueContributions;
 		acc.push(...page.nodes);
 		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
 		pages += 1;
@@ -480,7 +491,6 @@ async function paginateIssues(
 
 async function paginateReviews(
 	client: GithubClient,
-	login: string,
 	fromIso: string,
 	toIso: string,
 	firstCursor: string,
@@ -498,11 +508,11 @@ async function paginateReviews(
 		}
 		const data = await client.graphql<PaginateReviewsResponse>(
 			PAGINATE_REVIEWS_QUERY,
-			{ login, from: fromIso, to: toIso, after: cursor },
+			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.user) break;
+		if (!data.viewer) break;
 		const page =
-			data.user.contributionsCollection.pullRequestReviewContributions;
+			data.viewer.contributionsCollection.pullRequestReviewContributions;
 		acc.push(...page.nodes);
 		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
 		pages += 1;
