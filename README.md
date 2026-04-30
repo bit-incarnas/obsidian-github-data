@@ -40,7 +40,7 @@ Full disclosure: [`docs/data-egress.md`](docs/data-egress.md) + [`docs/data-sche
 ## Setup
 
 1. **Install.** Via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `bit-incarnas/obsidian-github-data` as a beta plugin.
-2. **Pick a token type.** Two shapes work; the choice depends on whether you want `Sync activity` to capture your full contribution graph or just the allowlisted repos.
+2. **Pick a token type.** Two shapes work; the choice depends on whether you want `Sync activity` to capture your full contribution graph or only the repos visible to the token. (`Sync activity` is user-centric and is not filtered by the repo allowlist — only the five repo-scoped commands are.)
    - **Fine-grained PAT (recommended for repo-scoped syncs).** [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens). Read-only scopes:
      - `Contents: read` (README)
      - `Issues: read`
