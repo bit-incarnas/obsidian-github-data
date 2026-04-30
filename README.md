@@ -19,6 +19,7 @@ Once installed and configured with a fine-grained GitHub PAT + an allowlist of r
 | `GitHub Data: Sync all open pull requests` | `.../Pull_Requests/{number}-{slug}.md` — one file per open PR |
 | `GitHub Data: Sync all releases` | `.../Releases/{tag}.md` — one file per release |
 | `GitHub Data: Sync all open Dependabot alerts` | `.../Dependabot/{number}-{package}-{severity}.md` |
+| `GitHub Data: Hydrate project charters` | `gh_*` frontmatter on every vault file with `github_repo: owner/repo` |
 
 Every synced file:
 - Carries structured frontmatter (Dataview-queryable out of the box).
@@ -72,6 +73,39 @@ Every outbound call this plugin can make, exhaustively documented:
 | `GET /repos/{o}/{r}/dependabot/alerts` | Sync all open Dependabot alerts | PAT header; `state=open&per_page=100`; paginated |
 
 **No auto-fetches on startup.** Calls are user-initiated by default, or scheduled by the opt-in **background sync** (Settings → GitHub Data → Background sync) which is **off by default**. When enabled, the same calls listed above fire on a configurable cadence (default 15 min heartbeat); no new destinations, payload shapes, or scopes are introduced. Background ticks skip themselves when the rate-limit budget is below 100. Vault content never leaves the vault.
+
+## Charter hydration (opt-in)
+
+Vault files (project charters, HUD pages, daily-note templates, anything) can opt into having their frontmatter automatically populated with synced GitHub state by adding a single line:
+
+```yaml
+---
+project: my-project
+github_repo: owner/repo   # opt in
+---
+```
+
+Run `GitHub Data: Hydrate project charters` from the command palette. Every vault file whose frontmatter contains `github_repo: owner/repo` (where the repo is in your allowlist and has been previously synced via `Sync all repo profiles` etc.) gets these keys merged into its frontmatter:
+
+| Key | Source |
+| :-- | :----- |
+| `gh_repo` | Echoed from `github_repo` (canonicalized lowercase) |
+| `gh_open_issues` | Count of files under `02_AREAS/GitHub/Repos/{o}__{r}/Issues/` |
+| `gh_open_prs` | Count under `Pull_Requests/` |
+| `gh_open_dependabot_alerts` | Count under `Dependabot/` |
+| `gh_last_release` | Tag of the release with the most recent `published_at`, or `null` |
+| `gh_default_branch` | From the synced repo profile |
+| `gh_last_synced` | From the synced repo profile (when the source was last refreshed) |
+| `gh_hydrated_at` | When the charter's `gh_*` block last actually changed |
+
+Properties:
+
+- **Read-only against GitHub.** No new API calls. Hydration is a vault-to-vault transformation over already-synced data.
+- **Body is never touched.** Only frontmatter, only the `gh_*` keys.
+- **Idempotent.** A re-run with no source changes is a no-op (the file's `mtime` is not bumped, so Obsidian Sync / iCloud / git don't see churn).
+- **`gh_hydrated_at` only advances when the data changes**, so it tracks "last real change" not "last button press."
+- **Charters without the marker are never modified.** No path globs to configure; the marker is the entire opt-in.
+- **Allowlist still gates.** A charter declaring `github_repo: evil-org/exfil` is skipped with a console warning if the repo isn't in your allowlist.
 
 ## Codeblocks
 

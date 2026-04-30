@@ -21,6 +21,11 @@ import {
 	VIEW_TYPE_SYNC_PROGRESS,
 } from "./ui/sync-progress-view";
 import { syncActivity } from "./sync/activity-writer";
+import {
+	applyHydrationUpdates,
+	buildHydrationPlans,
+	type VaultFileSnapshot,
+} from "./sync/charter-hydrator";
 import { syncRepoDependabotAlerts } from "./sync/dependabot-writer";
 import { syncRepoIssues } from "./sync/issue-writer";
 import { syncRepoPullRequests } from "./sync/pr-writer";
@@ -165,6 +170,14 @@ export default class GithubDataPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "hydrate-charters",
+			name: "Hydrate project charters",
+			callback: () => {
+				void this.hydrateProjectCharters();
+			},
+		});
+
 		// Codeblock processors: github-issue / github-pr / github-release /
 		// github-dependabot. Queries run against the synced vault tree via
 		// metadataCache; no network calls on render.
@@ -287,6 +300,94 @@ export default class GithubDataPlugin extends Plugin {
 			return { skip: { failed: 0 } };
 		}
 		return { token };
+	}
+
+	/**
+	 * Push synced GitHub state into vault files that have opted in via
+	 * `github_repo: owner/repo` frontmatter. Pure vault-to-vault: no
+	 * GitHub calls, no body modifications, only `gh_*` frontmatter keys
+	 * are written. Idempotent -- if no field would change since the
+	 * last hydration, the file is not written (avoids mtime churn).
+	 *
+	 * Always silent on success counts (writes a single Notice with
+	 * written / skipped totals); never opens dialogs.
+	 */
+	async hydrateProjectCharters(): Promise<{
+		written: number;
+		skipped: number;
+		errors: number;
+	}> {
+		const allowlist = this.settings.repoAllowlist;
+		if (allowlist.length === 0) {
+			new Notice(
+				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
+			);
+			return { written: 0, skipped: 0, errors: 0 };
+		}
+
+		const vaultFiles = this.gatherVaultSnapshots();
+		const plans = buildHydrationPlans({
+			vaultFiles,
+			allowlist,
+			nowIso: new Date().toISOString(),
+		});
+
+		const writer = new ObsidianVaultWriter(this.app);
+		let written = 0;
+		let skipped = 0;
+		let errors = 0;
+
+		for (const plan of plans) {
+			if (plan.status === "skipped") {
+				skipped++;
+				console.warn(
+					`[github-data] hydrate skipped ${plan.path}: ${plan.reason ?? "(no reason)"}`,
+				);
+				continue;
+			}
+			if (!plan.updates) {
+				errors++;
+				continue;
+			}
+			try {
+				await writer.updateFrontmatter(plan.path, (fm) => {
+					applyHydrationUpdates(fm, plan.updates as Record<string, unknown>);
+				});
+				written++;
+			} catch (err) {
+				errors++;
+				console.warn(
+					`[github-data] hydrate write failed for ${plan.path}:`,
+					err,
+				);
+			}
+		}
+
+		new Notice(
+			`GitHub Data: charter hydration complete. ${written} written, ${skipped} skipped, ${errors} failed.`,
+			6000,
+		);
+		return { written, skipped, errors };
+	}
+
+	/**
+	 * Snapshot every markdown file's path + frontmatter from
+	 * `metadataCache`. Used by `hydrateProjectCharters` to find opt-in
+	 * files (anywhere in the vault) and to read profile/release
+	 * frontmatter from the synced repo tree.
+	 */
+	private gatherVaultSnapshots(): VaultFileSnapshot[] {
+		const out: VaultFileSnapshot[] = [];
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			out.push({
+				path: file.path,
+				frontmatter:
+					(cache?.frontmatter as Record<string, unknown> | undefined) ??
+					null,
+			});
+		}
+		return out;
 	}
 
 	async syncActivityFeed(options: { silent?: boolean } = {}): Promise<SyncRunResult> {

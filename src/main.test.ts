@@ -55,7 +55,7 @@ describe("GithubDataPlugin", () => {
 	test("registers ping + all sync commands + sync-progress view", async () => {
 		const plugin = new GithubDataPlugin(app, manifest);
 		await plugin.onload();
-		expect(plugin.addCommand).toHaveBeenCalledTimes(8);
+		expect(plugin.addCommand).toHaveBeenCalledTimes(9);
 		const ids = (plugin.addCommand as jest.Mock).mock.calls.map(
 			(c) => c[0].id,
 		);
@@ -66,6 +66,7 @@ describe("GithubDataPlugin", () => {
 		expect(ids).toContain("sync-releases");
 		expect(ids).toContain("sync-dependabot");
 		expect(ids).toContain("sync-activity");
+		expect(ids).toContain("hydrate-charters");
 		expect(ids).toContain("open-sync-progress");
 	});
 
