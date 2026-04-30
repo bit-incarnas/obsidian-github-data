@@ -1,6 +1,6 @@
 # GitHub Data
 
-Obsidian plugin that mirrors GitHub state — repos, issues, pull requests, releases, Dependabot alerts — into vault-native markdown files. **Pull-in only:** vault data stays in the vault; the plugin only calls out to `api.github.com` for the data it's explicitly configured to pull, and only when you trigger a sync.
+Obsidian plugin that mirrors GitHub state — repos, issues, pull requests, releases, Dependabot alerts — into vault-native markdown files. **Pull-in only:** vault data stays in the vault; the plugin only calls out to `api.github.com` for the data it's explicitly configured to pull. Calls fire on user-triggered commands by default, or on the opt-in background-sync heartbeat (off by default; see Settings → GitHub Data → Background sync). Either way, no startup auto-fetches and no new destinations beyond the documented egress table.
 
 Built to make GitHub state queryable via [Dataview](https://github.com/blacksmithgu/obsidian-dataview), graph-integrated, and link-friendly inside the vault.
 

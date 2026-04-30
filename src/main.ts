@@ -255,8 +255,20 @@ export default class GithubDataPlugin extends Plugin {
 		this.circuit.reset();
 	}
 
-	async syncActivityFeed(options: { silent?: boolean } = {}): Promise<SyncRunResult> {
-		const silent = options.silent === true;
+	/**
+	 * Shared preflight for the six `syncAll*` methods. Returns the token
+	 * on success, or a `SyncRunResult` to early-return. Centralizes the
+	 * silent-Notice gating, the missing-token failure shape (counted as
+	 * 1 failure for aggregation), and the empty-allowlist behavior
+	 * (zero failures -- not a real error, just nothing to do).
+	 *
+	 * `requireAllowlist: false` for activity sync, which is user-centric
+	 * and does not iterate the allowlist.
+	 */
+	private syncPreflight(
+		silent: boolean,
+		requireAllowlist: boolean,
+	): { token: string } | { skip: SyncRunResult } {
 		const token = this.getToken();
 		if (!token) {
 			if (!silent) {
@@ -264,8 +276,24 @@ export default class GithubDataPlugin extends Plugin {
 					"No GitHub token set. Add one in Settings -> GitHub Data.",
 				);
 			}
-			return { failed: 1 };
+			return { skip: { failed: 1 } };
 		}
+		if (requireAllowlist && this.settings.repoAllowlist.length === 0) {
+			if (!silent) {
+				new Notice(
+					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
+				);
+			}
+			return { skip: { failed: 0 } };
+		}
+		return { token };
+	}
+
+	async syncActivityFeed(options: { silent?: boolean } = {}): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, false);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 
 		const windowDays = this.settings.activitySyncDays;
 		if (!silent) {
@@ -306,24 +334,10 @@ export default class GithubDataPlugin extends Plugin {
 		options: { silent?: boolean } = {},
 	): Promise<SyncRunResult> {
 		const silent = options.silent === true;
-		const token = this.getToken();
-		if (!token) {
-			if (!silent) {
-				new Notice(
-					"No GitHub token set. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 1 };
-		}
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			if (!silent) {
-				new Notice(
-					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 0 };
-		}
 
 		if (!silent) {
 			new Notice(
@@ -385,24 +399,10 @@ export default class GithubDataPlugin extends Plugin {
 		options: { silent?: boolean } = {},
 	): Promise<SyncRunResult> {
 		const silent = options.silent === true;
-		const token = this.getToken();
-		if (!token) {
-			if (!silent) {
-				new Notice(
-					"No GitHub token set. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 1 };
-		}
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			if (!silent) {
-				new Notice(
-					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 0 };
-		}
 
 		if (!silent) {
 			new Notice(
@@ -454,24 +454,10 @@ export default class GithubDataPlugin extends Plugin {
 		options: { silent?: boolean } = {},
 	): Promise<SyncRunResult> {
 		const silent = options.silent === true;
-		const token = this.getToken();
-		if (!token) {
-			if (!silent) {
-				new Notice(
-					"No GitHub token set. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 1 };
-		}
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			if (!silent) {
-				new Notice(
-					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 0 };
-		}
 
 		if (!silent) {
 			new Notice(
@@ -527,24 +513,10 @@ export default class GithubDataPlugin extends Plugin {
 		options: { silent?: boolean } = {},
 	): Promise<SyncRunResult> {
 		const silent = options.silent === true;
-		const token = this.getToken();
-		if (!token) {
-			if (!silent) {
-				new Notice(
-					"No GitHub token set. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 1 };
-		}
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			if (!silent) {
-				new Notice(
-					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 0 };
-		}
 
 		if (!silent) {
 			new Notice(
@@ -596,24 +568,10 @@ export default class GithubDataPlugin extends Plugin {
 		options: { silent?: boolean } = {},
 	): Promise<SyncRunResult> {
 		const silent = options.silent === true;
-		const token = this.getToken();
-		if (!token) {
-			if (!silent) {
-				new Notice(
-					"No GitHub token set. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 1 };
-		}
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			if (!silent) {
-				new Notice(
-					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-				);
-			}
-			return { failed: 0 };
-		}
 
 		if (!silent) {
 			new Notice(`GitHub Data: syncing ${allowlist.length} repo profile(s)...`);

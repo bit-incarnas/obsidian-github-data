@@ -142,6 +142,14 @@ export interface BackgroundSyncSchedulerOptions {
 export class BackgroundSyncScheduler {
 	private intervalId: number | null = null;
 	private tickCount = 0;
+	/**
+	 * Single-flight guard. `setInterval` does not await the previous
+	 * tick; if a tick takes longer than the cadence (slow sync, network
+	 * stall) the next interval would overlap. We drop the overlapping
+	 * tick rather than queueing it -- the scheduler is opportunistic,
+	 * the next on-time tick is fine.
+	 */
+	private tickInFlight = false;
 	private readonly setIntervalFn: (handler: () => void, ms: number) => number;
 	private readonly clearIntervalFn: (id: number) => void;
 	private readonly registerIntervalFn: (id: number) => number;
@@ -193,55 +201,95 @@ export class BackgroundSyncScheduler {
 	/**
 	 * One heartbeat tick. Public for tests; in production it's the
 	 * setInterval callback. Always returns rather than throwing so a
-	 * single bad tick doesn't kill the scheduler.
+	 * single bad tick doesn't kill the scheduler. Single-flight guarded
+	 * via `tickInFlight` -- overlapping ticks (slow run vs short cadence)
+	 * are dropped, not queued.
 	 */
 	async tick(): Promise<void> {
-		this.tickCount += 1;
-
-		const remaining = this.host.rateLimitRemaining();
-		if (
-			typeof remaining === "number" &&
-			remaining < MIN_REMAINING_FOR_BACKGROUND
-		) {
+		if (this.tickInFlight) {
 			console.warn(
-				`[github-data] background sync skipping tick: rate-limit remaining=${remaining} below threshold ${MIN_REMAINING_FOR_BACKGROUND}`,
+				"[github-data] background sync tick skipped: previous tick still in flight",
 			);
 			return;
 		}
+		this.tickInFlight = true;
+		try {
+			this.tickCount += 1;
 
-		const due = pickDueCommands(SYNC_COMMANDS, this.tickCount);
-
-		let totalFailed = 0;
-		const failedLabels: string[] = [];
-		for (const cmd of due) {
-			try {
-				const result = await this.runCommand(cmd);
-				if (result.failed > 0) {
-					totalFailed += result.failed;
-					failedLabels.push(cmd.label);
-				}
-				this.host.settings.lastBackgroundRunAt[cmd.id] = new Date(
-					this.now(),
-				).toISOString();
-			} catch (err) {
-				totalFailed += 1;
-				failedLabels.push(cmd.label);
+			const remaining = this.host.rateLimitRemaining();
+			if (
+				typeof remaining === "number" &&
+				remaining < MIN_REMAINING_FOR_BACKGROUND
+			) {
 				console.warn(
-					`[github-data] background sync ${cmd.id} threw:`,
-					err,
+					`[github-data] background sync skipping tick: rate-limit remaining=${remaining} below threshold ${MIN_REMAINING_FOR_BACKGROUND}`,
+				);
+				return;
+			}
+
+			// Two-stage filter: tickCount picks tier-eligible commands;
+			// `lastBackgroundRunAt` then suppresses any command that has
+			// already run within its tier cadence (manually or by a
+			// previous tick). Without this, a manual `Sync activity`
+			// between heartbeats would be re-fired by the next eligible
+			// tick because the original implementation wrote the
+			// timestamp but never read it back.
+			const nowMs = this.now();
+			const cadenceMs = this.host.settings.syncCadenceMinutes * 60_000;
+			const due = pickDueCommands(SYNC_COMMANDS, this.tickCount).filter(
+				(cmd) =>
+					hasCadenceElapsed(
+						this.host.settings.lastBackgroundRunAt[cmd.id],
+						cmd.tickEvery * cadenceMs,
+						nowMs,
+					),
+			);
+
+			let totalFailed = 0;
+			const failedLabels: string[] = [];
+			for (const cmd of due) {
+				try {
+					const result = await this.runCommand(cmd);
+					if (result.failed > 0) {
+						totalFailed += result.failed;
+						failedLabels.push(cmd.label);
+					}
+					this.host.settings.lastBackgroundRunAt[cmd.id] = new Date(
+						nowMs,
+					).toISOString();
+				} catch (err) {
+					totalFailed += 1;
+					failedLabels.push(cmd.label);
+					console.warn(
+						`[github-data] background sync ${cmd.id} threw:`,
+						err,
+					);
+				}
+			}
+
+			if (due.length > 0) {
+				try {
+					await this.host.saveSettings();
+				} catch (err) {
+					// Don't propagate -- the docblock promises tick() always
+					// returns. A persisted-state failure on one tick will
+					// self-correct on the next successful save; meanwhile
+					// the in-memory `lastBackgroundRunAt` is still accurate.
+					console.warn(
+						"[github-data] background sync saveSettings failed:",
+						err,
+					);
+				}
+			}
+
+			if (totalFailed > 0) {
+				new Notice(
+					`GitHub Data: background sync had ${totalFailed} failure(s) (${failedLabels.join(", ")}). Open Sync Progress for details.`,
+					8000,
 				);
 			}
-		}
-
-		if (due.length > 0) {
-			await this.host.saveSettings();
-		}
-
-		if (totalFailed > 0) {
-			new Notice(
-				`GitHub Data: background sync had ${totalFailed} failure(s) (${failedLabels.join(", ")}). Open Sync Progress for details.`,
-				8000,
-			);
+		} finally {
+			this.tickInFlight = false;
 		}
 	}
 
@@ -277,6 +325,28 @@ export function pickDueCommands(
 ): SyncCommand[] {
 	if (tickCount <= 0) return [];
 	return commands.filter((c) => tickCount % c.tickEvery === 0);
+}
+
+/**
+ * Pure decision: has at least `cadenceMs` elapsed since `lastIso`?
+ * A missing or unparseable timestamp is treated as "yes, run" -- the
+ * fresh-install case where `lastBackgroundRunAt[cmd.id]` is undefined
+ * shouldn't suppress the first run. A future-dated timestamp (clock
+ * skew, vault sync from another machine) also returns true so we don't
+ * stall waiting on a phantom past-future window.
+ *
+ * Exposed for tests.
+ */
+export function hasCadenceElapsed(
+	lastIso: string | undefined,
+	cadenceMs: number,
+	nowMs: number,
+): boolean {
+	if (!lastIso) return true;
+	const lastMs = Date.parse(lastIso);
+	if (!Number.isFinite(lastMs)) return true;
+	if (lastMs > nowMs) return true;
+	return nowMs - lastMs >= cadenceMs;
 }
 
 export const SCHEDULER_INTERNALS_FOR_TESTS = {

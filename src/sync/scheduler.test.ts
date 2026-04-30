@@ -1,5 +1,6 @@
 import {
 	BackgroundSyncScheduler,
+	hasCadenceElapsed,
 	pickDueCommands,
 	SCHEDULER_INTERNALS_FOR_TESTS,
 	type SchedulerHostContract,
@@ -95,6 +96,38 @@ describe("pickDueCommands", () => {
 	test("tick 8 fires MEDIUM but not LOW (8 % 4 == 0, 8 % 24 != 0)", () => {
 		const due = pickDueCommands(SYNC_COMMANDS, 8).map((c) => c.id);
 		expect(due.sort()).toEqual(["activity", "issues", "prs"]);
+	});
+});
+
+describe("hasCadenceElapsed", () => {
+	const now = Date.parse("2026-04-30T12:00:00Z");
+
+	test("returns true when no prior timestamp (fresh install)", () => {
+		expect(hasCadenceElapsed(undefined, 60_000, now)).toBe(true);
+	});
+
+	test("returns true for an unparseable string", () => {
+		expect(hasCadenceElapsed("not-a-date", 60_000, now)).toBe(true);
+	});
+
+	test("returns true when last run is older than the cadence", () => {
+		const last = new Date(now - 90_000).toISOString();
+		expect(hasCadenceElapsed(last, 60_000, now)).toBe(true);
+	});
+
+	test("returns false when last run is within the cadence", () => {
+		const last = new Date(now - 30_000).toISOString();
+		expect(hasCadenceElapsed(last, 60_000, now)).toBe(false);
+	});
+
+	test("returns true when last run is in the future (clock skew / cross-device sync)", () => {
+		const last = new Date(now + 10_000).toISOString();
+		expect(hasCadenceElapsed(last, 60_000, now)).toBe(true);
+	});
+
+	test("returns true at exactly the cadence boundary", () => {
+		const last = new Date(now - 60_000).toISOString();
+		expect(hasCadenceElapsed(last, 60_000, now)).toBe(true);
 	});
 });
 
@@ -206,16 +239,24 @@ describe("BackgroundSyncScheduler.tick", () => {
 		expect(state.calls.sort()).toEqual(["issues", "prs"]);
 	});
 
-	test("tick 4 fires HIGH + MEDIUM", async () => {
+	test("tick 4 fires HIGH + MEDIUM (with cadence-elapsed gating)", async () => {
 		const { host, state } = makeHost();
+		// Advance the injected clock by 15 minutes between ticks so the
+		// cadence-elapsed filter doesn't suppress HIGH-tier commands that
+		// ran on the previous tick.
+		let nowMs = Date.parse("2026-04-30T12:00:00Z");
 		const scheduler = new BackgroundSyncScheduler(host, {
 			registerInterval: (id) => id,
+			now: () => nowMs,
 		});
-		await scheduler.tick();
-		await scheduler.tick();
-		await scheduler.tick();
+		await scheduler.tick(); // tick 1: issues + prs
+		nowMs += 15 * 60_000;
+		await scheduler.tick(); // tick 2: issues + prs
+		nowMs += 15 * 60_000;
+		await scheduler.tick(); // tick 3: issues + prs
+		nowMs += 15 * 60_000;
 		state.calls.length = 0;
-		await scheduler.tick(); // tick 4
+		await scheduler.tick(); // tick 4: issues + prs + activity
 		expect(state.calls.sort()).toEqual(["activity", "issues", "prs"]);
 	});
 
@@ -277,5 +318,73 @@ describe("BackgroundSyncScheduler.tick", () => {
 		// lastBackgroundRunAt is still recorded for failed commands -- the
 		// run happened, the underlying writer just had per-repo failures
 		expect(state.settings.lastBackgroundRunAt.issues).toBeDefined();
+	});
+
+	test("respects lastBackgroundRunAt -- a recently-run command is skipped", async () => {
+		const fixedNow = Date.parse("2026-04-30T12:00:00Z");
+		const { host, state } = makeHost();
+		// Pretend issues ran 5 minutes ago; HIGH cadence at 15-min heartbeat
+		// is 15 minutes -- 5 min < 15 min, so issues must be suppressed.
+		state.settings.lastBackgroundRunAt.issues = new Date(
+			fixedNow - 5 * 60_000,
+		).toISOString();
+		const scheduler = new BackgroundSyncScheduler(host, {
+			registerInterval: (id) => id,
+			now: () => fixedNow,
+		});
+		await scheduler.tick();
+		expect(state.calls).toEqual(["prs"]);
+	});
+
+	test("a manual sync-equivalent timestamp older than cadence does not block the next tick", async () => {
+		const fixedNow = Date.parse("2026-04-30T12:00:00Z");
+		const { host, state } = makeHost();
+		state.settings.lastBackgroundRunAt.issues = new Date(
+			fixedNow - 16 * 60_000, // 16 min ago, > 15 min cadence
+		).toISOString();
+		const scheduler = new BackgroundSyncScheduler(host, {
+			registerInterval: (id) => id,
+			now: () => fixedNow,
+		});
+		await scheduler.tick();
+		expect(state.calls.sort()).toEqual(["issues", "prs"]);
+	});
+
+	test("single-flight guard drops overlapping ticks", async () => {
+		const { host, state } = makeHost();
+		// Make every command take a measurable amount of time so the
+		// second tick fires while the first is still running.
+		const slowCall = (id: SyncCommandId) => async () => {
+			state.calls.push(id);
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			return { failed: 0 };
+		};
+		host.syncAllOpenIssues = slowCall("issues");
+		host.syncAllOpenPullRequests = slowCall("prs");
+
+		const scheduler = new BackgroundSyncScheduler(host, {
+			registerInterval: (id) => id,
+		});
+
+		const first = scheduler.tick();
+		const second = scheduler.tick(); // should drop on tickInFlight
+		await Promise.all([first, second]);
+
+		// Only one tick's worth of calls should have landed.
+		expect(state.calls.sort()).toEqual(["issues", "prs"]);
+	});
+
+	test("saveSettings rejection is swallowed (does not throw out of tick)", async () => {
+		const { host, state } = makeHost();
+		host.saveSettings = async () => {
+			throw new Error("disk full");
+		};
+		const scheduler = new BackgroundSyncScheduler(host, {
+			registerInterval: (id) => id,
+		});
+
+		await expect(scheduler.tick()).resolves.toBeUndefined();
+		// Calls still ran despite the persist failure.
+		expect(state.calls.sort()).toEqual(["issues", "prs"]);
 	});
 });
