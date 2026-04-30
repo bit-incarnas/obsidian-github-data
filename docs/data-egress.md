@@ -18,12 +18,28 @@ User-facing disclosure of what data leaves your machine when this plugin runs. M
 | `POST /graphql` (viewer lookup) | `api.github.com` | User runs `GitHub Data: Sync activity` (first call) | Same auth + UA; body: `{ query: "query { viewer { login } }" }`; no vault content | User-initiated. One-shot per run; can be skipped if the caller passes `login` explicitly. |
 | `POST /graphql` (contributionsCollection) | `api.github.com` | User runs `GitHub Data: Sync activity` | Same auth + UA; body: GraphQL query + variables `{ login, from, to }` (ISO-8601 datetimes); no vault content | User-initiated. Returns commits-by-repo + opened-PR / opened-issue / reviews for the window. Window defaults to 30 days; capped at 365 by the settings UI (GitHub's contributionsCollection limit per query). |
 
-All outbound calls are **user-initiated** -- either clicking a settings button or invoking a command. No background polls, no scheduled syncs, no auto-fetches on startup.
+All outbound calls listed above are triggered either **user-initiated** (clicking a settings button or invoking a command) or by the **opt-in background sync** described below. No auto-fetches on startup.
+
+### Background sync (opt-in, off by default)
+
+Settings -> GitHub Data -> "Background sync" exposes a toggle (default **off**) and a heartbeat cadence (default 15 minutes; range 1-1440). When enabled, the plugin fires the same sync commands listed above on a schedule -- no new destinations, no new payload shapes, no different headers. The only behavior change is "when" the calls fire.
+
+Tier policy on each tick:
+
+| Tier | Cadence (at default 15 min heartbeat) | Commands |
+| :--- | :------------------------------------ | :------- |
+| High | every tick (15 min) | issues, PRs |
+| Medium | every 4 ticks (1 hr) | activity |
+| Low | every 24 ticks (6 hr) | repo profiles, releases, Dependabot |
+
+Background ticks are skipped entirely when the most recent rate-limit snapshot reports fewer than 100 remaining requests, leaving headroom for user-initiated syncs. Failures from background runs aggregate into a single `Notice`; successful background runs are silent. Per-repo failures land in `lastSyncError` exactly as user-initiated runs do, so the Sync Progress view surfaces them with no extra wiring.
+
+Disabling the toggle stops the heartbeat immediately. Stopping or unloading the plugin clears the timer.
 
 The **HTTP layer** in `src/github/` is built on `@octokit/core` + plugin-paginate-rest + plugin-rest-endpoint-methods, integrated via Octokit's canonical `request.fetch` override wrapping Obsidian's `requestUrl`. It sets `Authorization: token <PAT>` and `User-Agent: obsidian-github-data` on every call.
 
 **Retry behavior** (added in the rate-limit-discipline slice): failed requests may retry with exponential backoff + jitter. Specifically:
-- `401 Unauthorized` retries exactly once (per the design's "fresh connection" policy); a second consecutive 401 trips an in-process circuit breaker that blocks further requests until the user restarts Obsidian (proper reset UX lands with cron).
+- `401 Unauthorized` retries exactly once (per the design's "fresh connection" policy); a second consecutive 401 trips an in-process circuit breaker that blocks further requests until the user clicks **Reset circuit** in the Sync Progress view.
 - `429 Too Many Requests` sleeps `max(Retry-After, exp-backoff)` then retries.
 - `403` with a rate-limit body or `X-RateLimit-Remaining: 0` sleeps until `X-RateLimit-Reset` then retries.
 - `403` with `x-github-sso: required` trips the circuit immediately (no retry).

@@ -2,14 +2,14 @@
 
 Phase ladder for `obsidian-github-data`. Internal design doc is authoritative; this file is a public mirror.
 
-> **Status:** pre-alpha. Currently shipping `v0.0.5` with the activity-aggregator viewer-form fix. v0.2 of the design ladder is closing out (4/5 done); cron polling is the only remaining item — internal operator SOP was hardened to v0.2 on 2026-04-30.
+> **Status:** pre-alpha. v0.2 of the design ladder is **complete** — daily activity aggregation, Dependabot + releases sync, the operator SOP, and the opt-in background-sync heartbeat all ship in this milestone. Next phase is v0.3 (Telemetry Grid feed, Heatmap Calendar wiring, charter hydration).
 
 ## Phase ladder
 
 | Phase | Scope | Status |
 | :---- | :---- | :----- |
 | **v0.1 (MVP)** | Repo / open issue / open PR sync. Fine-grained PAT auth. SecretStorage migration. Allowlist editor. | Shipped |
-| **v0.2** | Dependabot sync. Releases sync. Daily activity aggregation. Cron polling. Operator SOP. | 4 / 5 — Dependabot, releases, activity, operator SOP ✅. Cron polling remaining. |
+| **v0.2** | Dependabot sync. Releases sync. Daily activity aggregation. Background sync (opt-in cron). Operator SOP. | Shipped |
 | **v0.3** | Charter hydration. Commit activity → Telemetry Grid feed. Contribution heatmap wiring. | Not started. Activity aggregator unblocks the data side. |
 | **v0.4** | GitHub Actions / workflow visibility. CodeRabbit reviews as a first-class entity type. | Not started. |
 | **v0.5** | Webhook receiver. Daily-note Flight Log auto-entries on merges + releases. | Not started. |
@@ -31,10 +31,7 @@ Concrete features in production today, in the order they landed:
 - Body sanitizer with explicit user-safety / vault-integrity split and a `disableBodySanitation` power-user toggle
 - Path containment: homoglyph, Windows-reserved, length-bomb, and traversal defenses on owner/repo segments
 - Persist-block protection: `{% persist:user "notes" %}` survives every re-sync; markers in GitHub-sourced content are escaped
-
-## Near-term (v0.2 close-out)
-
-1. **Cron polling.** Wire `syncCadenceMinutes` (already in settings, default 15) to a `setInterval` loop that fires syncs through the existing `Semaphore` so background polls don't starve user-initiated commands. Default off until opted in; data-egress doc gets a corresponding update.
+- Opt-in background sync — heartbeat with three frequency tiers, rate-limit-aware, off by default. Settings → GitHub Data → Background sync
 
 ## v0.3 candidates
 

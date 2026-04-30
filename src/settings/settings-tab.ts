@@ -38,6 +38,8 @@ export interface SettingsTabPluginContract {
 	app: App;
 	settings: import("./types").GithubDataSettings;
 	saveSettings(): Promise<void>;
+	/** Optional: present when the plugin is the real `GithubDataPlugin`. */
+	restartScheduler?(): void;
 }
 
 export class GithubDataSettingTab extends PluginSettingTab {
@@ -57,8 +59,80 @@ export class GithubDataSettingTab extends PluginSettingTab {
 		await this.renderAuthSection(containerEl);
 		this.renderAllowlistSection(containerEl);
 		this.renderActivitySection(containerEl);
+		this.renderBackgroundSyncSection(containerEl);
 		this.renderAdvancedSection(containerEl);
 		this.renderScopeHint(containerEl);
+	}
+
+	private renderBackgroundSyncSection(parent: HTMLElement): void {
+		parent.createEl("h3", { text: "Background sync" });
+
+		const desc = parent.createDiv({ cls: "setting-item-description" });
+		desc.setText(
+			"Opt-in heartbeat that fires sync commands on a cadence. Off by default. Each tick runs the commands whose tier is due: issues / PRs every tick, activity every 4 ticks, repo profiles / releases / Dependabot every 24 ticks. At the default 15-minute cadence: issues / PRs every 15 min, activity every 1 hr, the rest every 6 hrs. Failures aggregate into a single Notice; successes are silent. Background ticks are skipped when the rate-limit budget is below 100 remaining.",
+		);
+		desc.style.marginBottom = "0.75em";
+
+		new Setting(parent)
+			.setName("Enable background sync")
+			.setDesc(
+				"When enabled, the plugin will issue scheduled GitHub API calls in the background. The data-egress doc and README otherwise describe the plugin as user-initiated only -- this is the explicit opt-in for that.",
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.backgroundSyncEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.backgroundSyncEnabled = value;
+						await this.plugin.saveSettings();
+						this.plugin.restartScheduler?.();
+						await this.display();
+					});
+			});
+
+		new Setting(parent)
+			.setName("Cadence (minutes)")
+			.setDesc(
+				"Heartbeat interval. 1-1440 (1 minute to 24 hours). Default 15. Smaller values burn rate-limit budget faster; larger values reduce the high-frequency tier's freshness.",
+			)
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text.inputEl.min = "1";
+				text.inputEl.max = "1440";
+				let pending = this.plugin.settings.syncCadenceMinutes;
+				text.setValue(String(pending));
+				text.onChange((value) => {
+					const n = Number.parseInt(value, 10);
+					if (Number.isFinite(n) && n >= 1 && n <= 1440) {
+						pending = n;
+					}
+				});
+				text.inputEl.addEventListener("blur", async () => {
+					if (pending === this.plugin.settings.syncCadenceMinutes) return;
+					this.plugin.settings.syncCadenceMinutes = pending;
+					await this.plugin.saveSettings();
+					this.plugin.restartScheduler?.();
+				});
+			});
+
+		if (this.plugin.settings.backgroundSyncEnabled) {
+			const lastRuns = parent.createDiv({ cls: "setting-item-description" });
+			lastRuns.style.marginTop = "0.75em";
+			const entries = Object.entries(
+				this.plugin.settings.lastBackgroundRunAt,
+			);
+			if (entries.length === 0) {
+				lastRuns.setText(
+					"Last background runs: none yet -- waiting on the first tick.",
+				);
+			} else {
+				const lines = entries
+					.sort(([a], [b]) => a.localeCompare(b))
+					.map(([id, iso]) => `• ${id}: ${iso}`)
+					.join("\n");
+				lastRuns.style.whiteSpace = "pre-line";
+				lastRuns.setText(`Last background runs:\n${lines}`);
+			}
+		}
 	}
 
 	private renderAdvancedSection(parent: HTMLElement): void {

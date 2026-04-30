@@ -28,7 +28,7 @@ describe("GithubDataPlugin", () => {
 	test("loads default settings on onload", async () => {
 		const plugin = new GithubDataPlugin(app, manifest);
 		await plugin.onload();
-		expect(plugin.settings.schemaVersion).toBe(1);
+		expect(plugin.settings.schemaVersion).toBe(2);
 		expect(plugin.settings.token).toBe("");
 		expect(plugin.settings.useSecretStorage).toBe(false);
 		expect(plugin.settings.repoAllowlist).toEqual([]);
