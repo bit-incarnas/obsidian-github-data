@@ -110,6 +110,14 @@ export class GithubDataSettingTab extends PluginSettingTab {
 		);
 		desc.style.marginBottom = "0.75em";
 
+		const scopeNote = parent.createDiv({ cls: "setting-item-description" });
+		scopeNote.style.marginBottom = "0.75em";
+		scopeNote.style.borderLeft = "3px solid var(--text-accent, #7c3aed)";
+		scopeNote.style.paddingLeft = "0.75em";
+		scopeNote.setText(
+			"Token scope note: `viewer.contributionsCollection` only returns contributions to repos the token can see. A fine-grained PAT scoped to 'Only select repositories' will silently drop activity on every unscoped repo and produce 0 day files. Use a fine-grained PAT with Repository access set to 'All repositories', or a classic PAT with `read:user` (+ `repo` if you want private-repo contributions counted).",
+		);
+
 		new Setting(parent)
 			.setName("Window (days back from today)")
 			.setDesc(
