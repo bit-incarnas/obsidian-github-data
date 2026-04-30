@@ -94,7 +94,7 @@ Run `GitHub Data: Hydrate project charters` from the command palette. Every vaul
 | `gh_open_issues` | Count of files under `02_AREAS/GitHub/Repos/{o}__{r}/Issues/` |
 | `gh_open_prs` | Count under `Pull_Requests/` |
 | `gh_open_dependabot_alerts` | Count under `Dependabot/` |
-| `gh_last_release` | Tag of the release with the most recent `published_at`, or `null` |
+| `gh_last_release` | Tag of the release with the most recent `published` timestamp, or `null` |
 | `gh_default_branch` | From the synced repo profile |
 | `gh_last_synced` | From the synced repo profile (when the source was last refreshed) |
 | `gh_hydrated_at` | When the charter's `gh_*` block last actually changed |
