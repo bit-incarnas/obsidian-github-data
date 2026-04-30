@@ -22,8 +22,28 @@ export interface GithubDataSettings {
 	/** Allowlist of `owner/repo` strings the plugin is allowed to sync. */
 	repoAllowlist: string[];
 
-	/** Background sync cadence in minutes. 0 disables background sync. */
+	/**
+	 * Background sync master switch. Default false -- background sync is
+	 * opt-in. The README and docs/data-egress.md both describe sync as
+	 * user-initiated; flipping this requires a deliberate settings change.
+	 */
+	backgroundSyncEnabled: boolean;
+
+	/**
+	 * Heartbeat cadence (minutes) for background sync. Each tick fires the
+	 * frequency tiers that are due (issues / PRs every tick; activity every
+	 * 4 ticks; releases / profiles / Dependabot every 24 ticks). 1-1440.
+	 */
 	syncCadenceMinutes: number;
+
+	/**
+	 * Last time each background-sync command was run (ISO-8601 UTC). Keyed
+	 * by the same ids the scheduler iterates: `repo-profiles`, `issues`,
+	 * `prs`, `releases`, `dependabot`, `activity`. Drives the "skip if
+	 * recently run" guard so a manual sync between ticks pushes the next
+	 * scheduled fire of that command out by its tier cadence.
+	 */
+	lastBackgroundRunAt: Record<string, string>;
 
 	/**
 	 * How many days back from now to include when syncing activity
@@ -75,17 +95,19 @@ export type SyncErrorKind =
 	| "unknown";
 
 export const DEFAULT_SETTINGS: GithubDataSettings = {
-	schemaVersion: 1,
+	schemaVersion: 2,
 	token: "",
 	useSecretStorage: false,
 	secretTokenName: "github-data-pat",
 	devVaultGitNoticeShown: false,
 	repoAllowlist: [],
+	backgroundSyncEnabled: false,
 	syncCadenceMinutes: 15,
 	activitySyncDays: 30,
 	lastSyncedAt: {},
 	disableBodySanitation: false,
 	lastSyncError: {},
+	lastBackgroundRunAt: {},
 };
 
 /**
@@ -107,6 +129,11 @@ export function mergeSettings(
 		lastSyncedAt: { ...(loaded?.lastSyncedAt ?? {}) },
 		repoAllowlist: [...(loaded?.repoAllowlist ?? [])],
 		activitySyncDays: clampActivitySyncDays(loaded?.activitySyncDays),
+		syncCadenceMinutes: clampSyncCadenceMinutes(loaded?.syncCadenceMinutes),
+		// Strict-boolean coercion: a corrupted or hand-edited "true"
+		// string mustn't silently flip background sync on. Same rule as
+		// disableBodySanitation: only the literal `true` enables it.
+		backgroundSyncEnabled: loaded?.backgroundSyncEnabled === true,
 		// Security-sensitive: coerce strictly so a persisted string
 		// "false" or any other non-boolean payload can't silently
 		// enable the user-safety bypass via a truthy check.
@@ -114,7 +141,17 @@ export function mergeSettings(
 		// Defensive copy so view-rendering code can't mutate persisted
 		// state; guards against corrupted payloads (non-object) too.
 		lastSyncError: normalizeSyncErrorMap(loaded?.lastSyncError),
+		lastBackgroundRunAt: normalizeStringMap(loaded?.lastBackgroundRunAt),
 	};
+}
+
+function normalizeStringMap(raw: unknown): Record<string, string> {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(raw)) {
+		if (typeof v === "string") out[k] = v;
+	}
+	return out;
 }
 
 const SYNC_ERROR_KINDS: ReadonlySet<SyncErrorKind> = new Set([
@@ -161,5 +198,25 @@ function clampActivitySyncDays(raw: unknown): number {
 	const floored = Math.floor(n);
 	if (floored < 1) return DEFAULT_SETTINGS.activitySyncDays;
 	if (floored > 365) return 365;
+	return floored;
+}
+
+/**
+ * Sanitize `syncCadenceMinutes`. 1 minute floor (anything faster is a
+ * footgun against GitHub's secondary rate limits); 1440 (24h) ceiling
+ * since longer cadences are functionally "off." Out-of-range or
+ * non-numeric values fall back to the default (15).
+ */
+function clampSyncCadenceMinutes(raw: unknown): number {
+	const n =
+		typeof raw === "number"
+			? raw
+			: typeof raw === "string"
+				? Number.parseInt(raw, 10)
+				: Number.NaN;
+	if (!Number.isFinite(n)) return DEFAULT_SETTINGS.syncCadenceMinutes;
+	const floored = Math.floor(n);
+	if (floored < 1) return DEFAULT_SETTINGS.syncCadenceMinutes;
+	if (floored > 1440) return 1440;
 	return floored;
 }

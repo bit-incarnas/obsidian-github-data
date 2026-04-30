@@ -1,6 +1,6 @@
 # GitHub Data
 
-Obsidian plugin that mirrors GitHub state — repos, issues, pull requests, releases, Dependabot alerts — into vault-native markdown files. **Pull-in only:** vault data stays in the vault; the plugin only calls out to `api.github.com` for the data it's explicitly configured to pull, and only when you trigger a sync.
+Obsidian plugin that mirrors GitHub state — repos, issues, pull requests, releases, Dependabot alerts — into vault-native markdown files. **Pull-in only:** vault data stays in the vault; the plugin only calls out to `api.github.com` for the data it's explicitly configured to pull. Calls fire on user-triggered commands by default, or on the opt-in background-sync heartbeat (off by default; see Settings → GitHub Data → Background sync). Either way, no startup auto-fetches and no new destinations beyond the documented egress table.
 
 Built to make GitHub state queryable via [Dataview](https://github.com/blacksmithgu/obsidian-dataview), graph-integrated, and link-friendly inside the vault.
 
@@ -71,7 +71,7 @@ Every outbound call this plugin can make, exhaustively documented:
 | `GET /repos/{o}/{r}/releases` | Sync all releases | PAT header; `per_page=100`; paginated |
 | `GET /repos/{o}/{r}/dependabot/alerts` | Sync all open Dependabot alerts | PAT header; `state=open&per_page=100`; paginated |
 
-**No background polls. No scheduled syncs. No auto-fetches on startup.** Every call is user-initiated via a settings button or command-palette command. Vault content never leaves the vault.
+**No auto-fetches on startup.** Calls are user-initiated by default, or scheduled by the opt-in **background sync** (Settings → GitHub Data → Background sync) which is **off by default**. When enabled, the same calls listed above fire on a configurable cadence (default 15 min heartbeat); no new destinations, payload shapes, or scopes are introduced. Background ticks skip themselves when the rate-limit budget is below 100. Vault content never leaves the vault.
 
 ## Codeblocks
 
@@ -126,6 +126,8 @@ Each codeblock type has sensible default columns; override via `columns: [number
 | Clear token | Removes token from both SecretStorage and `data.json` |
 | Repository allowlist | `owner/repo` strings the plugin is allowed to sync; codeblock queries (future) will also enforce this |
 | Activity window (days) | How many days back from today to pull when running `Sync activity` (1-365) |
+| Enable background sync | Master switch for the heartbeat. Off by default. When on, sync commands fire on the cadence below |
+| Cadence (minutes) | Heartbeat interval for background sync (1-1440; default 15). High tier (issues / PRs) fires every tick; medium (activity) every 4 ticks; low (repo profiles / releases / Dependabot) every 24 ticks |
 | Disable body sanitation | Advanced / power-user escape hatch. See below |
 
 ### Advanced

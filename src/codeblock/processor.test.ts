@@ -10,17 +10,19 @@ function makeSettings(
 	allowlist: string[] = ["bit-incarnas/eden"],
 ): GithubDataSettings {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		token: "",
 		useSecretStorage: false,
 		secretTokenName: "github-data-pat",
 		devVaultGitNoticeShown: false,
 		repoAllowlist: allowlist,
-		syncCadenceMinutes: 0,
+		backgroundSyncEnabled: false,
+		syncCadenceMinutes: 15,
 		activitySyncDays: 30,
 		lastSyncedAt: {},
 		disableBodySanitation: false,
 		lastSyncError: {},
+		lastBackgroundRunAt: {},
 	};
 }
 

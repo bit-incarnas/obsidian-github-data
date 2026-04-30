@@ -26,7 +26,12 @@ import { syncRepoIssues } from "./sync/issue-writer";
 import { syncRepoPullRequests } from "./sync/pr-writer";
 import { syncRepoReleases } from "./sync/release-writer";
 import { syncRepoProfile } from "./sync/repo-profile-writer";
+import { BackgroundSyncScheduler } from "./sync/scheduler";
 import { ObsidianVaultWriter } from "./vault/writer";
+
+export interface SyncRunResult {
+	failed: number;
+}
 
 /**
  * Classify an arbitrary sync failure into (message, kind) for the view.
@@ -90,6 +95,7 @@ export default class GithubDataPlugin extends Plugin {
 	readonly rateLimit = new RateLimitTracker();
 	readonly circuit = new CircuitBreaker();
 	private readonly concurrency = new Semaphore();
+	private scheduler: BackgroundSyncScheduler | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -185,9 +191,37 @@ export default class GithubDataPlugin extends Plugin {
 			},
 		});
 
+		this.scheduler = new BackgroundSyncScheduler(
+			{
+				settings: this.settings,
+				saveSettings: () => this.saveSettings(),
+				getToken: () => this.getToken(),
+				rateLimitRemaining: () =>
+					this.rateLimit.getSnapshot()?.remaining ?? null,
+				syncAllRepoProfiles: (o) => this.syncAllRepoProfiles(o),
+				syncAllOpenIssues: (o) => this.syncAllOpenIssues(o),
+				syncAllOpenPullRequests: (o) => this.syncAllOpenPullRequests(o),
+				syncAllReleases: (o) => this.syncAllReleases(o),
+				syncAllDependabotAlerts: (o) => this.syncAllDependabotAlerts(o),
+				syncActivityFeed: (o) => this.syncActivityFeed(o),
+			},
+			{
+				registerInterval: (id) => this.registerInterval(id),
+			},
+		);
+
 		this.app.workspace.onLayoutReady(() => {
 			void this.onAppReady();
 		});
+	}
+
+	/**
+	 * Called by the settings tab after the user toggles background sync
+	 * or changes the cadence. Stops any active heartbeat and starts a
+	 * fresh one if the toggle is on.
+	 */
+	restartScheduler(): void {
+		this.scheduler?.restart();
 	}
 
 	/**
@@ -221,19 +255,52 @@ export default class GithubDataPlugin extends Plugin {
 		this.circuit.reset();
 	}
 
-	async syncActivityFeed(): Promise<void> {
+	/**
+	 * Shared preflight for the six `syncAll*` methods. Returns the token
+	 * on success, or a `SyncRunResult` to early-return. Centralizes the
+	 * silent-Notice gating, the missing-token failure shape (counted as
+	 * 1 failure for aggregation), and the empty-allowlist behavior
+	 * (zero failures -- not a real error, just nothing to do).
+	 *
+	 * `requireAllowlist: false` for activity sync, which is user-centric
+	 * and does not iterate the allowlist.
+	 */
+	private syncPreflight(
+		silent: boolean,
+		requireAllowlist: boolean,
+	): { token: string } | { skip: SyncRunResult } {
 		const token = this.getToken();
 		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
+			if (!silent) {
+				new Notice(
+					"No GitHub token set. Add one in Settings -> GitHub Data.",
+				);
+			}
+			return { skip: { failed: 1 } };
 		}
+		if (requireAllowlist && this.settings.repoAllowlist.length === 0) {
+			if (!silent) {
+				new Notice(
+					"No repos in the allowlist. Add one in Settings -> GitHub Data.",
+				);
+			}
+			return { skip: { failed: 0 } };
+		}
+		return { token };
+	}
+
+	async syncActivityFeed(options: { silent?: boolean } = {}): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, false);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 
 		const windowDays = this.settings.activitySyncDays;
-		new Notice(
-			`GitHub Data: syncing activity (last ${windowDays} day${windowDays === 1 ? "" : "s"})...`,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: syncing activity (last ${windowDays} day${windowDays === 1 ? "" : "s"})...`,
+			);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -242,41 +309,41 @@ export default class GithubDataPlugin extends Plugin {
 
 		if (!result.ok) {
 			console.warn("[github-data] activity sync failed:", result.reason);
-			new Notice(
-				`GitHub Data: activity sync failed -- ${result.reason ?? "unknown error"}`,
-				8000,
-			);
-			return;
+			if (!silent) {
+				new Notice(
+					`GitHub Data: activity sync failed -- ${result.reason ?? "unknown error"}`,
+					8000,
+				);
+			}
+			return { failed: 1 };
 		}
 
 		const wrote = result.writtenCount ?? 0;
 		const failed = result.failedCount ?? 0;
 		const days = result.totalDays ?? 0;
-		new Notice(
-			`GitHub Data: activity synced. ${wrote} day file(s) written across ${days} active day(s). ${failed} failed.`,
-			6000,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: activity synced. ${wrote} day file(s) written across ${days} active day(s). ${failed} failed.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
-	async syncAllDependabotAlerts(): Promise<void> {
-		const token = this.getToken();
-		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
+	async syncAllDependabotAlerts(
+		options: { silent?: boolean } = {},
+	): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			new Notice(
-				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
 
-		new Notice(
-			`GitHub Data: fetching Dependabot alerts for ${allowlist.length} repo(s)...`,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: fetching Dependabot alerts for ${allowlist.length} repo(s)...`,
+			);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -318,32 +385,30 @@ export default class GithubDataPlugin extends Plugin {
 			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
-		const skippedNote = skipped > 0 ? `, ${skipped} had alerts disabled` : "";
-		new Notice(
-			`GitHub Data: Dependabot sync complete. ${synced} synced, ${failed} failed${skippedNote}.`,
-			6000,
-		);
+		if (!silent) {
+			const skippedNote = skipped > 0 ? `, ${skipped} had alerts disabled` : "";
+			new Notice(
+				`GitHub Data: Dependabot sync complete. ${synced} synced, ${failed} failed${skippedNote}.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
-	async syncAllReleases(): Promise<void> {
-		const token = this.getToken();
-		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
+	async syncAllReleases(
+		options: { silent?: boolean } = {},
+	): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			new Notice(
-				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
 
-		new Notice(
-			`GitHub Data: fetching releases for ${allowlist.length} repo(s)...`,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: fetching releases for ${allowlist.length} repo(s)...`,
+			);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -376,31 +441,29 @@ export default class GithubDataPlugin extends Plugin {
 			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
-		new Notice(
-			`GitHub Data: release sync complete. ${synced} synced, ${failed} failed.`,
-			6000,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: release sync complete. ${synced} synced, ${failed} failed.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
-	async syncAllOpenPullRequests(): Promise<void> {
-		const token = this.getToken();
-		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
+	async syncAllOpenPullRequests(
+		options: { silent?: boolean } = {},
+	): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			new Notice(
-				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
 
-		new Notice(
-			`GitHub Data: fetching open PRs for ${allowlist.length} repo(s)...`,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: fetching open PRs for ${allowlist.length} repo(s)...`,
+			);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -437,31 +500,29 @@ export default class GithubDataPlugin extends Plugin {
 			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
-		new Notice(
-			`GitHub Data: PR sync complete. ${synced} synced, ${failed} failed.`,
-			6000,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: PR sync complete. ${synced} synced, ${failed} failed.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
-	async syncAllOpenIssues(): Promise<void> {
-		const token = this.getToken();
-		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
+	async syncAllOpenIssues(
+		options: { silent?: boolean } = {},
+	): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			new Notice(
-				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
 
-		new Notice(
-			`GitHub Data: fetching open issues for ${allowlist.length} repo(s)...`,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: fetching open issues for ${allowlist.length} repo(s)...`,
+			);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -494,29 +555,27 @@ export default class GithubDataPlugin extends Plugin {
 			await this.recordSyncOutcome(entry, result.ok, result.reason);
 		}
 
-		new Notice(
-			`GitHub Data: issue sync complete. ${synced} synced, ${failed} failed.`,
-			6000,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: issue sync complete. ${synced} synced, ${failed} failed.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
-	async syncAllRepoProfiles(): Promise<void> {
-		const token = this.getToken();
-		if (!token) {
-			new Notice(
-				"No GitHub token set. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
+	async syncAllRepoProfiles(
+		options: { silent?: boolean } = {},
+	): Promise<SyncRunResult> {
+		const silent = options.silent === true;
+		const pre = this.syncPreflight(silent, true);
+		if ("skip" in pre) return pre.skip;
+		const token = pre.token;
 		const allowlist = this.settings.repoAllowlist;
-		if (allowlist.length === 0) {
-			new Notice(
-				"No repos in the allowlist. Add one in Settings -> GitHub Data.",
-			);
-			return;
-		}
 
-		new Notice(`GitHub Data: syncing ${allowlist.length} repo profile(s)...`);
+		if (!silent) {
+			new Notice(`GitHub Data: syncing ${allowlist.length} repo profile(s)...`);
+		}
 
 		const client = this.createClient(token);
 		const writer = new ObsidianVaultWriter(this.app);
@@ -556,14 +615,21 @@ export default class GithubDataPlugin extends Plugin {
 
 		await this.saveSettings();
 
-		new Notice(
-			`GitHub Data: sync complete. ${ok} ok, ${failed} failed.`,
-			6000,
-		);
+		if (!silent) {
+			new Notice(
+				`GitHub Data: sync complete. ${ok} ok, ${failed} failed.`,
+				6000,
+			);
+		}
+		return { failed };
 	}
 
 	onunload(): void {
-		// Registered events/intervals auto-clean via the Plugin base class.
+		// `registerInterval` auto-cleans via the Plugin base class, but
+		// stop explicitly so the scheduler clears its internal `intervalId`
+		// reference -- if a future code path checks `isRunning()` during
+		// shutdown it should see false.
+		this.scheduler?.stop();
 	}
 
 	/**
@@ -649,5 +715,10 @@ export default class GithubDataPlugin extends Plugin {
 				await this.saveSettings();
 			},
 		});
+
+		// Start the background-sync heartbeat after layout is ready so
+		// the first tick (one cadence later) doesn't compete with
+		// Obsidian's startup work or other plugins' onLayoutReady hooks.
+		this.scheduler?.start();
 	}
 }
