@@ -450,7 +450,11 @@ async function paginatePullRequests(
 			PAGINATE_PULL_REQUESTS_QUERY,
 			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.viewer) break;
+		if (!data.viewer) {
+			throw new Error(
+				"Viewer contributions not returned during PR pagination (auth failure or unexpected response shape).",
+			);
+		}
 		const page = data.viewer.contributionsCollection.pullRequestContributions;
 		acc.push(...page.nodes);
 		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
@@ -480,7 +484,11 @@ async function paginateIssues(
 			PAGINATE_ISSUES_QUERY,
 			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.viewer) break;
+		if (!data.viewer) {
+			throw new Error(
+				"Viewer contributions not returned during issue pagination (auth failure or unexpected response shape).",
+			);
+		}
 		const page = data.viewer.contributionsCollection.issueContributions;
 		acc.push(...page.nodes);
 		cursor = page.pageInfo.hasNextPage ? (page.pageInfo.endCursor ?? "") : "";
@@ -510,7 +518,11 @@ async function paginateReviews(
 			PAGINATE_REVIEWS_QUERY,
 			{ from: fromIso, to: toIso, after: cursor },
 		);
-		if (!data.viewer) break;
+		if (!data.viewer) {
+			throw new Error(
+				"Viewer contributions not returned during review pagination (auth failure or unexpected response shape).",
+			);
+		}
 		const page =
 			data.viewer.contributionsCollection.pullRequestReviewContributions;
 		acc.push(...page.nodes);

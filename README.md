@@ -40,13 +40,17 @@ Full disclosure: [`docs/data-egress.md`](docs/data-egress.md) + [`docs/data-sche
 ## Setup
 
 1. **Install.** Via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `bit-incarnas/obsidian-github-data` as a beta plugin.
-2. **Create a fine-grained PAT.** At [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens), create a token with **read-only** access to the repos you want to sync. Required scopes:
-   - `Contents: read` (README)
-   - `Issues: read`
-   - `Pull requests: read`
-   - `Metadata: read`
-   - `Dependabot alerts: read`
-   - `Actions: read` (future enrichment)
+2. **Pick a token type.** Two shapes work; the choice depends on whether you want `Sync activity` to capture your full contribution graph or only the repos visible to the token. (`Sync activity` is user-centric and is not filtered by the repo allowlist — only the five repo-scoped commands are.)
+   - **Fine-grained PAT (recommended for repo-scoped syncs).** [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens). Read-only scopes:
+     - `Contents: read` (README)
+     - `Issues: read`
+     - `Pull requests: read`
+     - `Metadata: read`
+     - `Dependabot alerts: read`
+     - `Actions: read` (future enrichment)
+
+     **Repository access matters for `Sync activity`.** GitHub's `viewer.contributionsCollection` only returns contributions to repos the token can see. If Repository access is set to "Only select repositories," every commit / PR / issue / review on any unscoped repo is silently dropped — the activity sync succeeds with zero or near-zero day files. To capture your full contribution graph, switch Repository access to **All repositories**. The five repo-scoped commands (issues, PRs, releases, profiles, Dependabot) work fine on a narrow allowlist either way.
+   - **Classic PAT (simplest path for `Sync activity`).** [github.com/settings/tokens](https://github.com/settings/tokens). Scopes: `read:user` (lets `viewer.contributionsCollection` return private contributions) plus `repo` if any of the contributions you want counted are to private repos. Public-only contributions don't need `repo`. Wider blast radius than a scoped fine-grained PAT, but the plugin remains read-only.
 3. **Enter the PAT.** Settings → GitHub Data → Personal access token.
 4. **Migrate to SecretStorage** (recommended). If Obsidian 1.11+, click "Migrate to SecretStorage" — this moves the token out of plaintext into OS-level encrypted storage.
 5. **Rotate the original token.** Required after migration. The original value is already in `data.json` (and possibly in git history / Obsidian Sync history / SSD slack) — rotate it on GitHub.
