@@ -195,6 +195,10 @@ gh pr create --fill
 # CI runs; merge when green
 ```
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the public phase ladder, shipped surface, and what's deliberately not in scope.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
