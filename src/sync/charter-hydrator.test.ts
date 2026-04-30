@@ -56,7 +56,10 @@ function syncedFiles(opts: {
 	for (const r of opts.releases ?? []) {
 		files.push({
 			path: `${folder}/Releases/${r.tag}.md`,
-			frontmatter: { tag: r.tag, published_at: r.publishedAt },
+			// release-writer writes the publish timestamp to `published`,
+			// not `published_at`. Tests mirror that on-disk shape so a
+			// regression to the wrong key is caught here.
+			frontmatter: { tag: r.tag, published: r.publishedAt },
 		});
 	}
 
@@ -107,6 +110,53 @@ describe("buildHydrationPlans -- opt-in marker handling", () => {
 			nowIso: NOW,
 		});
 		expect(plans[0].status).toBe("skipped");
+	});
+
+	test("file with malformed github_repo (no slash) -> skipped with shape reason", () => {
+		const plans = buildHydrationPlans({
+			vaultFiles: [
+				{
+					path: "03_PROJECTS/foo/00_CHARTER_foo.md",
+					frontmatter: { github_repo: "not-a-repo-path" },
+				},
+			],
+			allowlist: ["bit-incarnas/eden"],
+			nowIso: NOW,
+		});
+		expect(plans).toHaveLength(1);
+		expect(plans[0].status).toBe("skipped");
+		expect(plans[0].reason).toMatch(/invalid github_repo marker/);
+		expect(plans[0].reason).not.toMatch(/not in the allowlist/);
+	});
+
+	test("file with malformed github_repo (extra slash) -> skipped with shape reason", () => {
+		const plans = buildHydrationPlans({
+			vaultFiles: [
+				{
+					path: "03_PROJECTS/foo/00_CHARTER_foo.md",
+					frontmatter: { github_repo: "owner/repo/extra" },
+				},
+			],
+			allowlist: ["bit-incarnas/eden"],
+			nowIso: NOW,
+		});
+		expect(plans[0].status).toBe("skipped");
+		expect(plans[0].reason).toMatch(/invalid github_repo marker/);
+	});
+
+	test("file with malformed github_repo (empty half) -> skipped with shape reason", () => {
+		const plans = buildHydrationPlans({
+			vaultFiles: [
+				{
+					path: "03_PROJECTS/foo/00_CHARTER_foo.md",
+					frontmatter: { github_repo: "owner/" },
+				},
+			],
+			allowlist: ["bit-incarnas/eden"],
+			nowIso: NOW,
+		});
+		expect(plans[0].status).toBe("skipped");
+		expect(plans[0].reason).toMatch(/invalid github_repo marker/);
 	});
 
 	test("file with github_repo pointing at unallowlisted repo -> skipped", () => {

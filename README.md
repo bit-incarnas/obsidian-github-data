@@ -19,7 +19,8 @@ Once installed and configured with a fine-grained GitHub PAT + an allowlist of r
 | `GitHub Data: Sync all open pull requests` | `.../Pull_Requests/{number}-{slug}.md` — one file per open PR |
 | `GitHub Data: Sync all releases` | `.../Releases/{tag}.md` — one file per release |
 | `GitHub Data: Sync all open Dependabot alerts` | `.../Dependabot/{number}-{package}-{severity}.md` |
-| `GitHub Data: Hydrate project charters` | `gh_*` frontmatter on every vault file with `github_repo: owner/repo` |
+
+A sixth command, `GitHub Data: Hydrate project charters`, pushes synced state into vault files that opt in via `github_repo: owner/repo` frontmatter — see the [Charter hydration](#charter-hydration-opt-in) section. It does not pull data from GitHub; it's a vault-to-vault transformation over already-synced files.
 
 Every synced file:
 - Carries structured frontmatter (Dataview-queryable out of the box).

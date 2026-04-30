@@ -149,6 +149,20 @@ export function buildHydrationPlans(
 			continue;
 		}
 
+		// Shape-validate before allowlist check so a malformed marker
+		// (e.g., "no-slash-here", "trailing/", "/leading", "a/b/c") gets
+		// a useful "invalid marker" reason instead of being mis-reported
+		// as "not in the allowlist."
+		if (!isValidRepoMarker(marker)) {
+			plans.push({
+				path: file.path,
+				repoKey: marker,
+				status: "skipped",
+				reason: `invalid github_repo marker "${marker}" -- expected exactly one slash separating owner and repo, e.g. "owner/repo"`,
+			});
+			continue;
+		}
+
 		if (!isRepoAllowlisted(allowlist, marker)) {
 			plans.push({
 				path: file.path,
@@ -227,6 +241,22 @@ function readGithubRepoMarker(
 	return trimmed.length === 0 ? "" : trimmed;
 }
 
+/**
+ * Surface-level shape check for the `github_repo` marker. Intentionally
+ * lenient -- the writers' own `parseRepoPath` runs the rigorous
+ * containment / homoglyph / Windows-reserved checks. This guard's only
+ * job is to stop "not in the allowlist" being a misleading reason for
+ * markers that obviously aren't a repo path. Allowlist canonicalization
+ * still runs after this passes.
+ */
+function isValidRepoMarker(marker: string): boolean {
+	const parts = marker.split("/");
+	if (parts.length !== 2) return false;
+	const [owner, repo] = parts;
+	if (!owner || !repo) return false;
+	return true;
+}
+
 interface IndexedRepo {
 	repoKey: string;
 	profile: Record<string, unknown> | null;
@@ -294,7 +324,11 @@ function indexSyncedFilesByRepo(
 		if (remainder.startsWith(ENTITY_SUBFOLDERS.releases.toLowerCase() + "/")) {
 			const fm = file.frontmatter ?? {};
 			const tag = pickString(fm.tag) ?? deriveTagFromPath(file.path);
-			const publishedAt = pickString(fm.published_at);
+			// release-writer writes the published timestamp to `published`,
+			// not `published_at`. Reading the wrong key here meant
+			// publishedAt was always null and the latest-release pick fell
+			// back to lexicographic tag order rather than recency.
+			const publishedAt = pickString(fm.published);
 			if (tag) {
 				entry.releases.push({ tag, publishedAt });
 			}
