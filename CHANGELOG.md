@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-04-30
+
+Two-feature release: opt-in background sync (closing v0.2) and charter hydration (opening v0.3). No new GitHub egress endpoints; both features operate over already-documented data flows.
+
 ### Added (charter hydration -- v0.3 milestone start)
 - **`src/sync/charter-hydrator.ts`** -- new pure module. `buildHydrationPlans({ vaultFiles, allowlist, nowIso })` returns one `HydrationPlan` per opt-in vault file (any markdown file with `github_repo: owner/repo` in its frontmatter). Each plan carries either `status: "ok"` with the merged `gh_*` frontmatter to write, or `status: "skipped"` with a reason (empty marker / non-string marker / unallowlisted repo / no synced data / no change since last hydration). No Obsidian imports; 100% unit-testable. The companion `applyHydrationUpdates(fm, updates)` mutates a frontmatter object in place, designed for use inside `processFrontMatter`'s mutate callback.
 - **Opt-in marker only.** Charters self-select by adding `github_repo: owner/repo` to their frontmatter. The plugin does not iterate `03_PROJECTS/` or any project folder; it iterates the vault's full markdown set and filters by the marker. Lets users put the marker on any file -- charter, HUD, daily-note template -- without configuration surface.
